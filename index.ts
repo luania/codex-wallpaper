@@ -4,8 +4,8 @@ import { chromium } from 'playwright';
 const browser = await chromium.connectOverCDP('http://127.0.0.1:9341');
 const page = browser.contexts()[0].pages()[0];
 
-const png = fs.readFileSync('/Users/you/Desktop/overlay.png');
-const dataUrl = `data:image/png;base64,${png.toString('base64')}`;
+const png = fs.readFileSync('bg2.jpeg');
+const dataUrl = `data:image/jpeg;base64,${png.toString('base64')}`;
 
 await page.evaluate((src) => {
   document.getElementById('__my_overlay__')?.remove();
@@ -19,8 +19,9 @@ await page.evaluate((src) => {
     inset: '0',
     width: '100vw',
     height: '100vh',
-    objectFit: 'fill',
-    opacity: '0.3',
+    objectFit: 'cover',
+    objectPosition: 'center',
+    opacity: '0.2',
     zIndex: '2147483647',
     pointerEvents: 'none',
   });
