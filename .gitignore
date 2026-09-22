@@ -3,4 +3,5 @@ imgs/
 downloads/
 pixivflow-ranking*.config.json
 data/
+codex-snapshot/
 .DS_Store
