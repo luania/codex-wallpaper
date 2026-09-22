@@ -6,6 +6,8 @@
   "type": "module",
   "scripts": {
     "download": "node download.ts",
+    "download:artist": "node download-artist.ts",
+    "download:monthly-safe-top100": "node data/build-safe-monthly-config.mjs && node --require ./data/pixivflow-image-mirror.cjs ./node_modules/pixivflow/dist/index.js download --config ./pixivflow-ranking-safe.config.json",
     "start": "open -na \"/Applications/ChatGPT.app\" --args --remote-debugging-address=127.0.0.1 --remote-debugging-port=9341",
     "inject": "node index.ts"
   },
@@ -19,5 +21,8 @@
     "@types/node": "^26.6.2",
     "playwright": "^1.63.0",
     "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "pixivflow": "^2.41.0"
   }
 }

@@ -2,6 +2,14 @@
 
 需要 Node.js 24+。
 
+通过 pixivflow 下载最新插画月榜，排除 H 图和明显擦边内容后取过滤榜单前 100 个作品：
+
+```sh
+pnpm download:monthly-safe-top100
+```
+
+命令执行时读取最新榜单并逐页筛选，每个作品只保存第一张原图到 `downloads/`，作品清单保存为 `downloads/ranking-monthly-safe-top100.json`。过滤会排除漫画、动图、被遮罩或有性内容标记的作品，以及标题或标签包含裸露、内衣、泳装、性暗示等关键词的作品。不足 100 个时会报错并停止，不会启动图片下载。
+
 下载当前最新发布的 Pixiv 日榜图片：
 
 ```sh
@@ -11,17 +19,26 @@ pnpm download
 
 图片按本机下载日期保存到项目的 `imgs/YYYY-MM-DD/`，文件名前的数字保留榜单顺序。同一天重复下载会覆盖同名文件，其他日期目录保留。Pixiv 最新发布的日榜日期可能是前一天；原图片域名连接失败时会尝试公开镜像 `i.pixiv.re`。
 
+下载指定画师的全部插画作品（包括多页作品）：
+
+```sh
+pnpm download:artist 123456
+pnpm download:artist https://www.pixiv.net/users/123456
+pnpm download:artist --user 123456 --output ./downloads/my-artist
+```
+
+默认保存到 `downloads/artists/<画师 ID>/`。命令会读取 `pixivflow-ranking.config.json` 中的 Pixiv 登录配置，也可以通过 `--config <路径>` 指定其他配置文件；每个画师使用独立的 PixivFlow 下载记录，重复执行会跳过已完成作品。
+
 启动带调试端口的应用，然后注入本地图片：
 
 ```sh
 pnpm start
 # 等应用启动完成后运行
 pnpm inject
-pnpm inject --dir imgs/2026-09-20
-pnpm inject --dir "/absolute/path/to/pictures"
-# 也支持：node index.ts imgs/2026-09-20
+# 只注入 downloads/ 下指定子目录的图片
+pnpm inject artists/1554775/artists/1554775
 ```
 
-注入命令只读取指定目录的图片，不下载、不递归读取子目录。相对路径以当前工作目录为准；未指定目录时，使用项目 `imgs/` 下最新的非空日期目录，兼容原来直接保存在 `imgs/` 的图片。
+注入命令默认递归扫描项目 `downloads/` 目录（包括画师下载生成的子目录）。可用 `pnpm inject <子目录>` 只扫描指定目录及其子目录；路径相对于 `downloads/`，无需添加 `downloads/` 前缀，不支持绝对路径或跳出 `downloads/`。命令不读取图片内容，也不注入 Base64；它把图片转换为 `http://127.0.0.1:5500/downloads/...` URL（保留完整子目录路径），由已启动的 Live Server 在页面轮替时提供图片。
 
-支持 JPG/JPEG、PNG、WebP、GIF、AVIF、BMP 和 SVG，按文件名自然排序。注入完成后程序退出，页面每分钟轮替；`⌘ + Option + →`（Mac）或 `Ctrl + Alt + →` 切换下一张并重新计时。刷新页面后需要重新注入。
+支持 JPG/JPEG、PNG、WebP、GIF、AVIF、BMP 和 SVG，按相对路径自然排序。注入完成后程序退出，页面每分钟轮替；`⌘ + Option + →`（Mac）或 `Ctrl + Alt + →` 切换下一张并重新计时，`⌘ + Option + Space`（Mac）或 `Ctrl + Alt + Space` 切换前景图显示/隐藏。刷新页面后需要重新注入。

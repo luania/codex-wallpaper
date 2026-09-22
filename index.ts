@@ -14,6 +14,8 @@ async function installPixivBackground(images: string[]) {
   let timer: number | undefined;
   let index = 0;
   let loading = false;
+  let foregroundVisible = true;
+  let overlay: HTMLImageElement | undefined;
   state.__pixivBackgroundCleanup__ = () => {
     stopped = true;
     window.clearInterval(timer);
@@ -25,12 +27,12 @@ async function installPixivBackground(images: string[]) {
     loading = true;
 
     try {
-      // All data is embedded; rotation makes no network requests.
+      // The page loads each image from the local Live Server URL on demand.
       for (let attempts = 0; attempts < images.length; attempts++) {
         if (stopped) return;
         const next = new Image();
         next.src = images[index]!;
-        index = (index + 1) % images.length;
+        index = (index + Math.floor(Math.random() * images.length) + 1) % images.length;
 
         try {
           await next.decode();
@@ -51,20 +53,18 @@ async function installPixivBackground(images: string[]) {
           height: '100vh',
           objectFit: 'cover',
           objectPosition: 'center',
-          // Blend with the interface instead of washing it out like a
-          // semi-transparent white veil.
-          opacity: '0.28',
-          filter: 'saturate(1.18) contrast(1.08) brightness(0.86)',
-          mixBlendMode: 'multiply',
-          transform: 'translateZ(0)',
+          opacity: '0.2',
+          // filter: 'blur(5px)',
           zIndex: '2147483647',
           pointerEvents: 'none',
         });
+        next.style.display = foregroundVisible ? '' : 'none';
         document.getElementById('__my_overlay__')?.remove();
         document.documentElement.appendChild(next);
+        overlay = next;
         return;
       }
-      throw new Error('所有日榜图片均无法解码');
+      throw new Error('所有背景图片均无法解码');
     } finally {
       loading = false;
     }
@@ -79,6 +79,20 @@ async function installPixivBackground(images: string[]) {
   }
 
   function onKeyDown(event: KeyboardEvent) {
+    // Cmd+Option+Space on macOS, Ctrl+Alt+Space on Windows/Linux toggles the foreground.
+    const isToggleShortcut =
+      event.code === 'Space' && event.altKey &&
+      event.metaKey !== event.ctrlKey && !event.shiftKey && !event.isComposing;
+    if (isToggleShortcut) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (!event.repeat) {
+        foregroundVisible = !foregroundVisible;
+        if (overlay) overlay.style.display = foregroundVisible ? '' : 'none';
+      }
+      return;
+    }
+
     // Cmd+Option+Right on macOS, Ctrl+Alt+Right on Windows/Linux.
     if (
       event.code !== 'ArrowRight' || !event.altKey ||
@@ -102,21 +116,20 @@ async function installPixivBackground(images: string[]) {
 }
 
 const { values, positionals } = parseArgs({
-  options: {
-    dir: { type: 'string', short: 'd' },
-    help: { type: 'boolean', short: 'h' },
-  },
+  options: { help: { type: 'boolean', short: 'h' } },
   allowPositionals: true,
 });
 if (values.help) {
-  console.log('用法：node index.ts [--dir <图片目录>] 或 node index.ts <图片目录>');
-  console.log('默认读取 imgs/ 下最新的日期目录；没有日期图片时兼容读取 imgs/。');
+  console.log('用法：pnpm inject [子目录]');
+  console.log('默认递归读取项目 downloads/，也可指定相对于 downloads/ 的子目录。');
+  console.log('示例：pnpm inject artists/1554775/artists/1554775');
+  console.log('图片通过 http://127.0.0.1:5500 提供。');
   process.exit(0);
 }
-if (positionals.length > 1 || (values.dir !== undefined && positionals.length > 0)) {
-  throw new Error('请只指定一个图片目录：node index.ts --dir <目录>');
+if (positionals.length > 1) {
+  throw new Error('inject 最多接受一个 downloads/ 子目录参数。用法：pnpm inject [子目录]');
 }
-const { directory, images } = await loadLocalImages(values.dir ?? positionals[0]);
+const { directory, images } = await loadLocalImages(positionals[0]);
 console.log(`从 ${directory} 读取了 ${images.length} 张图片`);
 
 const browser = await chromium.connectOverCDP('http://127.0.0.1:9341');
@@ -126,7 +139,7 @@ try {
   if (!page) throw new Error('没有找到可注入背景的页面');
 
   // Reuse the named world so reinjection also cleans up the previous version.
-  // No cross-origin privileges are needed: all images were read from local files.
+  // The page fetches images from the local Live Server after injection.
   const session = await page.context().newCDPSession(page);
   const { frameTree } = await session.send('Page.getFrameTree');
   const { executionContextId } = await session.send('Page.createIsolatedWorld', {
@@ -143,7 +156,7 @@ try {
   if (result.exceptionDetails) {
     throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
   }
-  console.log('本地图片已注入，每 1 分钟轮替；⌘/Ctrl + Alt + → 切换下一张；程序退出后继续运行。');
+  console.log('downloads/ 图片 URL 已注入，每 1 分钟轮替；⌘/Ctrl + Alt + → 切换下一张；程序退出后继续运行。');
 } finally {
   // For a CDP-connected browser this only disconnects; page timers keep running.
   await browser.close();
