@@ -4,7 +4,8 @@ import type { LocalImage } from './local-images.ts';
 export async function installPixivBackground(images: LocalImage[]) {
   const intervalMs = 60_000;
   const loadTimeoutMs = 15_000;
-  const fadeDurationMs = 500;
+  const fadeDurationMs = 1000;
+  const statusDurationMs = 1_500;
   type Orientation = 'landscape' | 'portrait';
   const state = window as typeof window & {
     __pixivBackgroundCleanup__?: () => void;
@@ -19,6 +20,8 @@ export async function installPixivBackground(images: LocalImage[]) {
   let overlayOpacity = 0.2;
   let overlay: HTMLImageElement | undefined;
   let overlayUrl: string | undefined;
+  let status: HTMLDivElement | undefined;
+  let statusTimer: number | undefined;
   let rotationController: AbortController | undefined;
   let lastWindowOrientation = getWindowOrientation();
   const pendingLoads = new Set<() => void>();
@@ -39,12 +42,16 @@ export async function installPixivBackground(images: LocalImage[]) {
     window.removeEventListener('wheel', onWheel, true);
     window.removeEventListener('resize', onResize);
     rotationController?.abort();
+    window.clearTimeout(statusTimer);
+    statusTimer = undefined;
     for (const cancel of pendingLoads) cancel();
     for (const fadingOverlay of fadingOverlays) fadingOverlay.remove();
     fadingOverlays.clear();
     for (const fadeTimer of fadeTimers) window.clearTimeout(fadeTimer);
     fadeTimers.clear();
     overlay?.remove();
+    status?.remove();
+    status = undefined;
   }
   state.__pixivBackgroundCleanup__ = cleanup;
 
@@ -54,6 +61,59 @@ export async function installPixivBackground(images: LocalImage[]) {
 
   function imageOrientation(image: HTMLImageElement): Orientation {
     return image.naturalWidth >= image.naturalHeight ? 'landscape' : 'portrait';
+  }
+
+  function showStatus(message: string) {
+    if (!status) return;
+    window.clearTimeout(statusTimer);
+    statusTimer = undefined;
+    status.textContent = message;
+    status.style.opacity = '1';
+    statusTimer = window.setTimeout(() => {
+      statusTimer = undefined;
+      if (status) status.style.opacity = '0';
+    }, statusDurationMs);
+  }
+
+  function copyWithTextarea(text: string): Promise<void> {
+    const input = document.createElement('textarea');
+    input.value = text;
+    input.setAttribute('readonly', '');
+    Object.assign(input.style, {
+      position: 'fixed',
+      top: '0',
+      left: '0',
+      width: '1px',
+      height: '1px',
+      opacity: '0',
+      pointerEvents: 'none',
+    });
+    document.documentElement.appendChild(input);
+    input.select();
+    let copied = false;
+    try {
+      copied = document.execCommand?.('copy') ?? false;
+    } finally {
+      input.remove();
+    }
+    return copied ? Promise.resolve() : Promise.reject(new Error('剪贴板不可用'));
+  }
+
+  function copyText(text: string): Promise<void> {
+    const clipboard = typeof navigator === 'undefined' ? undefined : navigator.clipboard;
+    if (clipboard?.writeText) return clipboard.writeText(text).catch(() => copyWithTextarea(text));
+    return copyWithTextarea(text);
+  }
+
+  function copyCurrentImageUrl() {
+    if (!overlayUrl) {
+      showStatus('暂无图片地址');
+      return;
+    }
+    void copyText(overlayUrl).then(
+      () => showStatus('已复制'),
+      () => showStatus('复制失败'),
+    );
   }
 
   function loadImage(url: string, signal?: AbortSignal): Promise<HTMLImageElement> {
@@ -131,7 +191,10 @@ export async function installPixivBackground(images: LocalImage[]) {
   async function showNext(controller: AbortController) {
     while (!stopped && !controller.signal.aborted) {
       const candidates = candidatesForWindow();
-      if (candidates.length === 0) throw new Error('所有背景图片均无法加载或无法确定尺寸');
+      if (candidates.length === 0) {
+        console.log(11111)
+        throw new Error('所有背景图片均无法加载或无法确定尺寸');
+      }
       if (candidates.length === 1 && candidates[0] === overlayUrl) return;
 
       const alternatives = candidates.filter((url) => url !== overlayUrl);
@@ -169,8 +232,8 @@ export async function installPixivBackground(images: LocalImage[]) {
         opacity: String(overlayOpacity),
         filter: `blur(${blurPx}px)`,
         transition: `opacity ${fadeDurationMs}ms ease`,
-        mixBlendMode: 'soft-light',
-        zIndex: '2147483647',
+        mixBlendMode: 'screen',
+        zIndex: '2147483646',
         pointerEvents: 'none',
       });
       next.style.display = foregroundVisible ? '' : 'none';
@@ -237,15 +300,23 @@ export async function installPixivBackground(images: LocalImage[]) {
     event.stopImmediatePropagation();
     overlayOpacity = Math.min(1, Math.max(0, overlayOpacity + (event.deltaY < 0 ? 0.01 : -0.01)));
     if (overlay) overlay.style.opacity = String(overlayOpacity);
+    showStatus(`不透明度 ${Math.round(overlayOpacity * 100)}%`);
   }
 
   function onKeyDown(event: KeyboardEvent) {
     if (stopped || !event.altKey || event.metaKey === event.ctrlKey || event.shiftKey || event.isComposing) return;
+    if (event.code === 'KeyC') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (!event.repeat) copyCurrentImageUrl();
+      return;
+    }
     if (event.code === 'ArrowUp' || event.code === 'ArrowDown') {
       event.preventDefault();
       event.stopImmediatePropagation();
       blurPx = Math.max(0, blurPx + (event.code === 'ArrowUp' ? 1 : -1));
       if (overlay) overlay.style.filter = `blur(${blurPx}px)`;
+      showStatus(`模糊 ${blurPx}px`);
       return;
     }
     if (event.code === 'Space') {
@@ -265,9 +336,33 @@ export async function installPixivBackground(images: LocalImage[]) {
   }
 
   try {
+    status = document.createElement('div');
+    status.id = '__my_status__';
+    status.setAttribute('role', 'status');
+    status.setAttribute('aria-live', 'polite');
+    Object.assign(status.style, {
+      position: 'fixed',
+      right: '16px',
+      bottom: '16px',
+      zIndex: '2147483647',
+      maxWidth: 'calc(100vw - 32px)',
+      padding: '8px 12px',
+      borderRadius: '8px',
+      background: 'rgba(0, 0, 0, 0.72)',
+      color: '#fff',
+      font: '13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      whiteSpace: 'nowrap',
+      opacity: '0',
+      transition: 'opacity 160ms ease',
+      pointerEvents: 'none',
+    });
+    document.documentElement.appendChild(status);
     await classifyUnknownImages();
     if (stopped) return;
-    if (candidatesForWindow().length === 0) throw new Error('所有背景图片均无法加载或无法确定尺寸');
+    if (candidatesForWindow().length === 0) {
+      console.log(22222);
+      throw new Error('所有背景图片均无法加载或无法确定尺寸');
+    }
     lastWindowOrientation = getWindowOrientation();
     window.addEventListener('keydown', onKeyDown, true);
     window.addEventListener('wheel', onWheel, { capture: true, passive: false });

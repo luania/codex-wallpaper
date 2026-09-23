@@ -8,7 +8,8 @@ type Listener = (...args: any[]) => void;
 function createPage(random = Math.random) {
   const listeners = new Map<string, Set<Listener>>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
-  const appended: FakeImage[] = [];
+  const appended: Array<FakeImage | FakeElement> = [];
+  const copied: string[] = [];
   let shown: FakeImage | undefined;
   let decodeCalls = 0;
   const sizes: Record<string, [number, number]> = {
@@ -17,13 +18,22 @@ function createPage(random = Math.random) {
     tall: [700, 1000],
   };
 
-  class FakeImage {
+  class FakeElement {
     id = '';
-    url = '';
     style: Record<string, string> = {};
+    textContent = '';
+    removed = false;
+
+    setAttribute() {}
+    remove() {
+      this.removed = true;
+    }
+  }
+
+  class FakeImage extends FakeElement {
+    url = '';
     naturalWidth = 0;
     naturalHeight = 0;
-    removed = false;
 
     set src(value: string) {
       this.url = value;
@@ -35,12 +45,18 @@ function createPage(random = Math.random) {
       decodeCalls++;
     }
 
-    setAttribute() {}
     removeAttribute() {}
     remove() {
+      super.remove();
       this.removed = true;
       if (shown === this) shown = undefined;
     }
+  }
+
+  class FakeTextarea extends FakeElement {
+    value = '';
+
+    select() {}
   }
 
   const window = {
@@ -71,12 +87,31 @@ function createPage(random = Math.random) {
       listeners.get(type)?.delete(listener);
     },
   };
+  const elements = new Map<string, FakeElement>();
   const document = {
-    getElementById: () => shown,
-      documentElement: {
-      appendChild(image: FakeImage) {
+    getElementById(id: string) {
+      if (id === '__my_overlay__') return shown;
+      return elements.get(id);
+    },
+    createElement(tagName: string) {
+      return tagName === 'textarea' ? new FakeTextarea() : new FakeElement();
+    },
+    execCommand(command: string) {
+      return command === 'copy';
+    },
+    documentElement: {
+      appendChild(image: FakeImage | FakeElement) {
         appended.push(image);
-        shown = image;
+        if (image.id) elements.set(image.id, image);
+        if (image instanceof FakeImage) shown = image;
+      },
+    },
+  };
+  const navigator = {
+    clipboard: {
+      writeText(text: string) {
+        copied.push(text);
+        return Promise.resolve();
       },
     },
   };
@@ -84,9 +119,10 @@ function createPage(random = Math.random) {
     window,
     document,
     Image: FakeImage,
+    navigator,
     AbortController,
     console,
-    Math: { min: Math.min, max: Math.max, floor: Math.floor, random },
+    Math: { min: Math.min, max: Math.max, floor: Math.floor, round: Math.round, random },
   }) as (images: Array<{ url: string; orientation?: 'landscape' | 'portrait' }>) => Promise<void>;
 
   return {
@@ -98,6 +134,8 @@ function createPage(random = Math.random) {
       for (const listener of listeners.get(type) ?? []) listener(...args);
     },
     get appended() { return appended; },
+    get status() { return elements.get('__my_status__'); },
+    get copied() { return copied; },
     cleanup() {
       (window as typeof window & { __pixivBackgroundCleanup__?: () => void }).__pixivBackgroundCleanup__?.();
     },
@@ -173,8 +211,64 @@ test('crossfades the old image while the new image fades in', async () => {
     assert.notEqual(page.shown, first);
     assert.equal(first.style.opacity, '0');
     assert.equal(first.removed, false);
-    await new Promise((resolve) => setTimeout(resolve, 550));
+    await new Promise((resolve) => setTimeout(resolve, 1050));
     assert.equal(first.removed, true);
+  } finally {
+    page.cleanup();
+  }
+});
+
+test('shows the current blur and opacity while adjusting them', async () => {
+  const page = createPage();
+  await page.install([{ url: 'wide', orientation: 'landscape' }]);
+  try {
+    page.emit('keydown', {
+      code: 'ArrowUp',
+      altKey: true,
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      isComposing: false,
+      repeat: false,
+      preventDefault() {},
+      stopImmediatePropagation() {},
+    });
+    assert.equal(page.status?.textContent, '模糊 1px');
+    assert.equal(page.status?.style.opacity, '1');
+
+    page.emit('wheel', {
+      altKey: true,
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      deltaY: -1,
+      preventDefault() {},
+      stopImmediatePropagation() {},
+    });
+    assert.equal(page.status?.textContent, '不透明度 21%');
+  } finally {
+    page.cleanup();
+  }
+});
+
+test('copies the current image address with the copy shortcut', async () => {
+  const page = createPage();
+  await page.install([{ url: 'wide', orientation: 'landscape' }]);
+  try {
+    page.emit('keydown', {
+      code: 'KeyC',
+      altKey: true,
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      isComposing: false,
+      repeat: false,
+      preventDefault() {},
+      stopImmediatePropagation() {},
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(page.copied, ['wide']);
+    assert.equal(page.status?.textContent, '已复制');
   } finally {
     page.cleanup();
   }

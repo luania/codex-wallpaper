@@ -29,6 +29,12 @@ try {
   // Reuse the named world so reinjection also cleans up the previous version.
   // Node classifies supported files from their headers; the page handles only fallback files.
   const session = await page.context().newCDPSession(page);
+  // The app page's CSP only allows https/blob/data images, while the local
+  // Live Server intentionally serves files over http://127.0.0.1:5500. Keep
+  // this enabled after injection because the background loads later rotations.
+  console.log('Page.setBypassCSP 1')
+  await session.send('Page.setBypassCSP', { enabled: true });
+  console.log('Page.setBypassCSP 2')
   const { frameTree } = await session.send('Page.getFrameTree');
   const { executionContextId } = await session.send('Page.createIsolatedWorld', {
     frameId: frameTree.frame.id,
@@ -44,7 +50,7 @@ try {
   if (result.exceptionDetails) {
     throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
   }
-  console.log('downloads/ 图片 URL 已注入，按窗口横竖方向筛选并每 1 分钟轮替；⌘/Ctrl + Alt + → 切换下一张，↑/↓ 调整模糊，滚轮调整透明度，Space 显示/隐藏；程序退出后继续运行。');
+  console.log('downloads/ 图片 URL 已注入，按窗口横竖方向筛选并每 1 分钟轮替；⌘/Ctrl + Alt + → 切换下一张，↑/↓ 调整模糊，滚轮调整不透明度，⌘/Ctrl + Alt + C 复制图片地址，Space 显示/隐藏；程序退出后继续运行。');
 } finally {
   // For a CDP-connected browser this only disconnects; page timers keep running.
   await browser.close();
