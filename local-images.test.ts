@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { resolveLocalImagesDirectory } from './local-images.ts';
+import { orientationFromDimensions, resolveLocalImagesDirectory } from './local-images.ts';
+
+test('uses EXIF-aware dimensions for orientation metadata', () => {
+  assert.equal(orientationFromDimensions({ width: 1600, height: 900 }), 'landscape');
+  assert.equal(orientationFromDimensions({ width: 600, height: 1200 }), 'portrait');
+  assert.equal(orientationFromDimensions({ width: 600, height: 1200, orientation: 6 }), 'landscape');
+  assert.equal(orientationFromDimensions({ width: 800, height: 800 }), 'landscape');
+  assert.equal(orientationFromDimensions({ width: 0, height: 100 }), undefined);
+});
 
 test('resolves the default downloads directory', async () => {
   const directory = await resolveLocalImagesDirectory();

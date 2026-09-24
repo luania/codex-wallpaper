@@ -143,7 +143,7 @@ function createPage(
       revokedUrls.push(url);
     },
   };
-  const install = runInNewContext(`(${installPixivBackground.toString()})`, {
+  const installRaw = runInNewContext(`(${installPixivBackground.toString()})`, {
     window,
     document,
     HTMLInputElement: FakeInput,
@@ -153,7 +153,16 @@ function createPage(
     AbortController,
     console,
     Math: { min: Math.min, max: Math.max, floor: Math.floor, round: Math.round, random },
-  }) as (inputId: string) => Promise<number>;
+  }) as (inputId: string, metadata: Array<{ path: string; orientation?: 'landscape' | 'portrait' }>) => Promise<number>;
+  const install = (
+    inputId: string,
+    metadata: Array<{ path: string; orientation?: 'landscape' | 'portrait' }> = files.map((file) => ({
+      path: file.webkitRelativePath.replace(/^selected\//, ''),
+      orientation: sizes[file.webkitRelativePath]?.[0]! >= sizes[file.webkitRelativePath]?.[1]!
+        ? 'landscape' as const
+        : 'portrait' as const,
+    })),
+  ) => installRaw(inputId, metadata);
 
   return {
     install,
@@ -184,24 +193,28 @@ test('reads and filters images from the selected file input', async () => {
   await page.install('input');
   try {
     assert.equal(page.shown?.url, 'blob:selected/wide.png');
-    assert.deepEqual(page.objectUrls, ['blob:selected/tall.jpg', 'blob:selected/wide.png']);
-    assert.equal(page.decodeCalls, 3);
+    assert.deepEqual(page.objectUrls, ['blob:selected/wide.png']);
+    assert.equal(page.decodeCalls, 1);
   } finally {
     page.cleanup();
   }
 });
 
 test('classifies files in the browser and follows resize orientation', async () => {
-  const page = createPage();
-  await page.install('input');
+  const page = createPage(() => 0);
+  await page.install('input', [
+    { path: 'wide.png', orientation: 'landscape' },
+    { path: 'tall.jpg' },
+  ]);
   try {
     assert.equal(page.shown?.url, 'blob:selected/wide.png');
-    assert.equal(page.decodeCalls, 3);
+    assert.equal(page.decodeCalls, 1);
     page.window.innerWidth = 600;
     page.window.innerHeight = 1000;
     page.emit('resize');
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(page.shown?.url, 'blob:selected/tall.jpg');
+    assert.deepEqual(page.objectUrls, ['blob:selected/wide.png', 'blob:selected/tall.jpg']);
   } finally {
     page.cleanup();
   }
@@ -310,7 +323,7 @@ test('revokes object URLs and removes the file input during cleanup', async () =
   const page = createPage();
   await page.install('input');
   page.cleanup();
-  assert.deepEqual(page.revokedUrls, ['blob:selected/tall.jpg', 'blob:selected/wide.png']);
+  assert.deepEqual(page.revokedUrls, ['blob:selected/wide.png']);
   assert.equal(page.input.removed, true);
 });
 

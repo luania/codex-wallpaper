@@ -1,11 +1,19 @@
 // Serialized into an isolated page world: keep all runtime dependencies inside this function.
-export async function installPixivBackground(inputId: string) {
+export async function installPixivBackground(
+  inputId: string,
+  metadata: Array<{ path: string; orientation?: 'landscape' | 'portrait' }>,
+) {
   const intervalMs = 60_000;
   const loadTimeoutMs = 15_000;
   const fadeDurationMs = 1000;
   const statusDurationMs = 1_500;
   type Orientation = 'landscape' | 'portrait';
-  type BackgroundImage = { url: string; path: string };
+  type BackgroundImage = {
+    file: File;
+    path: string;
+    orientation: Orientation | undefined;
+    url: string | undefined;
+  };
   const supportedExtensions = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.avif', '.bmp', '.svg']);
   const state = window as typeof window & {
     __pixivBackgroundCleanup__?: () => void;
@@ -18,18 +26,25 @@ export async function installPixivBackground(inputId: string) {
     throw new Error('找不到已选择图片目录的 file input');
   }
   const fileInput = input;
+  const metadataByPath = new Map(metadata.map((image) => [image.path, image.orientation]));
   const files = Array.from(fileInput.files ?? [])
     .filter((file) => supportedExtensions.has(`.${file.name.split('.').pop()?.toLowerCase() ?? ''}`))
-    .map((file) => ({ file, path: file.webkitRelativePath || file.name }))
+    .map((file) => {
+      const path = file.webkitRelativePath || file.name;
+      const relativePath = path.includes('/') ? path.slice(path.indexOf('/') + 1) : path;
+      return {
+        file,
+        path,
+        url: undefined,
+        orientation: metadataByPath.get(path) ?? metadataByPath.get(relativePath),
+      };
+    })
     .sort((a, b) => a.path.localeCompare(b.path, 'en', { numeric: true }));
   if (files.length === 0) {
     fileInput.remove();
     throw new Error('所选目录中没有支持的图片');
   }
-  const images: BackgroundImage[] = files.map(({ file, path }) => ({
-    url: URL.createObjectURL(file),
-    path,
-  }));
+  const images: BackgroundImage[] = files;
 
   let stopped = false;
   let timer: number | undefined;
@@ -37,7 +52,7 @@ export async function installPixivBackground(inputId: string) {
   let blurPx = 0;
   let overlayOpacity = 0.2;
   let overlay: HTMLImageElement | undefined;
-  let overlayUrl: string | undefined;
+  let overlayImage: BackgroundImage | undefined;
   let overlayPath: string | undefined;
   let status: HTMLDivElement | undefined;
   let statusTimer: number | undefined;
@@ -46,11 +61,14 @@ export async function installPixivBackground(inputId: string) {
   const pendingLoads = new Set<() => void>();
   const fadingOverlays = new Set<HTMLImageElement>();
   const fadeTimers = new Set<number>();
-  const objectUrls = new Set(images.map((image) => image.url));
-  const imagesByOrientation: Record<Orientation, string[]> = { landscape: [], portrait: [] };
-  const imageOrder = new Map(images.map((image, index) => [image.url, index]));
-  const imageByUrl = new Map(images.map((image) => [image.url, image]));
-  const unknownImages = images.map((image) => image.url);
+  const objectUrls = new Set<string>();
+  const imagesByOrientation: Record<Orientation, BackgroundImage[]> = { landscape: [], portrait: [] };
+  const imageOrder = new Map(images.map((image, index) => [image, index]));
+  const unknownImages = images.filter((image) => !image.orientation);
+
+  for (const image of images) {
+    if (image.orientation) imagesByOrientation[image.orientation].push(image);
+  }
 
   function cleanup() {
     stopped = true;
@@ -77,6 +95,53 @@ export async function installPixivBackground(inputId: string) {
     }
   }
   state.__pixivBackgroundCleanup__ = cleanup;
+
+  function releaseImageUrl(image: BackgroundImage) {
+    if (!image.url) return;
+    URL.revokeObjectURL(image.url);
+    objectUrls.delete(image.url);
+    image.url = undefined;
+  }
+
+  function removeFromPool(pool: BackgroundImage[], image: BackgroundImage) {
+    const index = pool.indexOf(image);
+    if (index >= 0) pool.splice(index, 1);
+  }
+
+  function removeImageFromPools(image: BackgroundImage) {
+    removeFromPool(imagesByOrientation.landscape, image);
+    removeFromPool(imagesByOrientation.portrait, image);
+    removeFromPool(unknownImages, image);
+  }
+
+  function setImageOrientation(image: BackgroundImage, orientation: Orientation) {
+    removeImageFromPools(image);
+    image.orientation = orientation;
+    const pool = imagesByOrientation[orientation];
+    const index = imageOrder.get(image)!;
+    const insertAt = pool.findIndex((candidate) => imageOrder.get(candidate)! > index);
+    if (insertAt < 0) pool.push(image);
+    else pool.splice(insertAt, 0, image);
+  }
+
+  function candidatesForWindow(): BackgroundImage[] {
+    const orientation = getWindowOrientation();
+    const preferred = imagesByOrientation[orientation];
+    const fallback = imagesByOrientation[orientation === 'landscape' ? 'portrait' : 'landscape'];
+    if (preferred.length > 0) return unknownImages.length > 0
+      ? [...preferred, ...unknownImages]
+      : preferred;
+    if (unknownImages.length > 0) return [...unknownImages, ...fallback];
+    return fallback;
+  }
+
+  function getImageUrl(image: BackgroundImage) {
+    if (!image.url) {
+      image.url = URL.createObjectURL(image.file);
+      objectUrls.add(image.url);
+    }
+    return image.url;
+  }
 
   function getWindowOrientation(): Orientation {
     return window.innerWidth >= window.innerHeight ? 'landscape' : 'portrait';
@@ -139,7 +204,7 @@ export async function installPixivBackground(inputId: string) {
     );
   }
 
-  function loadImage(url: string, signal?: AbortSignal): Promise<HTMLImageElement> {
+  function loadImage(source: BackgroundImage, signal?: AbortSignal): Promise<HTMLImageElement> {
     return new Promise((resolve, reject) => {
       const image = new Image();
       let settled = false;
@@ -154,6 +219,7 @@ export async function installPixivBackground(inputId: string) {
         signal?.removeEventListener('abort', cancel);
         if (error) {
           image.removeAttribute('src');
+          releaseImageUrl(source);
           reject(error);
         } else {
           resolve(image);
@@ -167,7 +233,7 @@ export async function installPixivBackground(inputId: string) {
         return;
       }
       image.decoding = 'async';
-      image.src = url;
+      image.src = getImageUrl(source);
       void image.decode().then(() => {
         if (!(image.naturalWidth > 0 && image.naturalHeight > 0)) {
           finish(new Error('图片尺寸无效'));
@@ -178,69 +244,40 @@ export async function installPixivBackground(inputId: string) {
     });
   }
 
-  async function classifyUnknownImages() {
-    const orientations: (Orientation | undefined)[] = new Array(unknownImages.length);
-    let nextIndex = 0;
-    async function worker() {
-      while (!stopped) {
-        const index = nextIndex++;
-        if (index >= unknownImages.length) return;
-        const url = unknownImages[index]!;
-        try {
-          const image = await loadImage(url);
-          orientations[index] = imageOrientation(image);
-        } catch (error) {
-          if (!stopped) console.warn('[Pixiv 背景] 跳过无法加载或尺寸无效的图片', imageByUrl.get(url)?.path, error);
-        }
-      }
-    }
-    await Promise.all(Array.from({ length: Math.min(4, unknownImages.length) }, () => worker()));
-    orientations.forEach((orientation, index) => {
-      if (orientation) imagesByOrientation[orientation].push(unknownImages[index]!);
-    });
-    for (const orientation of ['landscape', 'portrait'] as const) {
-      imagesByOrientation[orientation].sort((a, b) => imageOrder.get(a)! - imageOrder.get(b)!);
-    }
-  }
-
-  function candidatesForWindow(): string[] {
-    const orientation = getWindowOrientation();
-    const preferred = imagesByOrientation[orientation];
-    return preferred.length > 0
-      ? preferred
-      : imagesByOrientation[orientation === 'landscape' ? 'portrait' : 'landscape'];
-  }
-
   async function showNext(controller: AbortController) {
     while (!stopped && !controller.signal.aborted) {
       const candidates = candidatesForWindow();
       if (candidates.length === 0) {
         throw new Error('所有背景图片均无法加载或无法确定尺寸');
       }
-      if (candidates.length === 1 && candidates[0] === overlayUrl) return;
+      if (candidates.length === 1 && candidates[0] === overlayImage) return;
 
-      const alternatives = candidates.filter((url) => url !== overlayUrl);
-      const url = alternatives[Math.floor(Math.random() * alternatives.length)]!;
-      const image = imageByUrl.get(url)!;
+      const alternatives = candidates.filter((image) => image !== overlayImage);
+      const image = alternatives[Math.floor(Math.random() * alternatives.length)]!;
       let next: HTMLImageElement;
       try {
-        next = await loadImage(url, controller.signal);
+        next = await loadImage(image, controller.signal);
       } catch (error) {
         if (stopped || controller.signal.aborted) return;
-        console.warn('[Pixiv 背景] 跳过无法加载的图片', url, error);
-        candidates.splice(candidates.indexOf(url), 1);
+        console.warn('[Pixiv 背景] 跳过无法加载的图片', image.path, error);
+        removeImageFromPools(image);
         continue;
       }
-      if (stopped || controller.signal.aborted) return;
-
-      // A file can change since classification; update its pool before displaying it.
-      const actualPool = imagesByOrientation[imageOrientation(next)];
-      if (actualPool !== candidates) {
-        candidates.splice(candidates.indexOf(url), 1);
-        actualPool.push(url);
+      if (stopped || controller.signal.aborted) {
+        next.remove();
+        releaseImageUrl(image);
+        return;
       }
+
+      // Metadata is fast for normal files; verify only files whose metadata was unavailable.
+      const actualOrientation = imageOrientation(next);
+      if (image.orientation !== actualOrientation) setImageOrientation(image, actualOrientation);
       // Recheck the latest viewport even if its resize event has not been delivered yet.
-      if (!candidatesForWindow().includes(url)) continue;
+      if (!candidatesForWindow().includes(image)) {
+        next.remove();
+        releaseImageUrl(image);
+        continue;
+      }
 
       next.id = '__my_overlay__';
       next.alt = '';
@@ -263,8 +300,9 @@ export async function installPixivBackground(inputId: string) {
       next.style.opacity = '0';
       document.documentElement.appendChild(next);
       const previous = overlay;
+      const previousImage = overlayImage;
       overlay = next;
-      overlayUrl = url;
+      overlayImage = image;
       overlayPath = image.path;
       window.requestAnimationFrame(() => {
         if (stopped) return;
@@ -275,6 +313,7 @@ export async function installPixivBackground(inputId: string) {
         previous.style.opacity = '0';
         const fadeTimer = window.setTimeout(() => {
           previous.remove();
+          if (previousImage && previousImage !== overlayImage) releaseImageUrl(previousImage);
           fadingOverlays.delete(previous);
           fadeTimers.delete(fadeTimer);
         }, fadeDurationMs);
@@ -381,7 +420,6 @@ export async function installPixivBackground(inputId: string) {
       pointerEvents: 'none',
     });
     document.documentElement.appendChild(status);
-    await classifyUnknownImages();
     if (stopped) return;
     if (candidatesForWindow().length === 0) {
       throw new Error('所有背景图片均无法加载或无法确定尺寸');

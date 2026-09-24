@@ -1,7 +1,7 @@
 import { parseArgs } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { chromium } from 'playwright';
-import { resolveLocalImagesDirectory } from './local-images.ts';
+import { loadLocalImages } from './local-images.ts';
 import { installPixivBackground } from './background.ts';
 
 const { values, positionals } = parseArgs({
@@ -18,7 +18,7 @@ if (values.help) {
 if (positionals.length > 1) {
   throw new Error('inject 最多接受一个 downloads/ 子目录参数。用法：pnpm inject [子目录]');
 }
-const directory = await resolveLocalImagesDirectory(positionals[0]);
+const { directory, images } = await loadLocalImages(positionals[0]);
 
 const browser = await chromium.connectOverCDP('http://127.0.0.1:9341');
 try {
@@ -59,7 +59,7 @@ try {
   const result = await session.send('Runtime.callFunctionOn', {
     executionContextId,
     functionDeclaration: installPixivBackground.toString(),
-    arguments: [{ value: inputId }],
+    arguments: [{ value: inputId }, { value: images }],
     awaitPromise: true,
     returnByValue: true,
   });
