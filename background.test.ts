@@ -4,18 +4,31 @@ import test from 'node:test';
 import { installPixivBackground } from './background.ts';
 
 type Listener = (...args: any[]) => void;
+type FakeFile = {
+  name: string;
+  type: string;
+  webkitRelativePath: string;
+};
 
-function createPage(random = Math.random) {
+function createPage(
+  random = Math.random,
+  files: FakeFile[] = [
+    { name: 'wide.png', type: 'image/png', webkitRelativePath: 'selected/wide.png' },
+    { name: 'tall.jpg', type: 'image/jpeg', webkitRelativePath: 'selected/tall.jpg' },
+  ],
+) {
   const listeners = new Map<string, Set<Listener>>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
   const appended: Array<FakeImage | FakeElement> = [];
   const copied: string[] = [];
+  const objectUrls: string[] = [];
+  const revokedUrls: string[] = [];
   let shown: FakeImage | undefined;
   let decodeCalls = 0;
   const sizes: Record<string, [number, number]> = {
-    wide: [1600, 900],
-    wide2: [1400, 900],
-    tall: [700, 1000],
+    'selected/wide.png': [1600, 900],
+    'selected/wide2.png': [1400, 900],
+    'selected/tall.jpg': [700, 1000],
   };
 
   class FakeElement {
@@ -30,6 +43,11 @@ function createPage(random = Math.random) {
     }
   }
 
+  class FakeInput extends FakeElement {
+    type = 'file';
+    files = files;
+  }
+
   class FakeImage extends FakeElement {
     url = '';
     naturalWidth = 0;
@@ -37,7 +55,7 @@ function createPage(random = Math.random) {
 
     set src(value: string) {
       this.url = value;
-      const size = sizes[value];
+      const size = sizes[value.slice('blob:'.length)];
       if (size) [this.naturalWidth, this.naturalHeight] = size;
     }
 
@@ -48,7 +66,6 @@ function createPage(random = Math.random) {
     removeAttribute() {}
     remove() {
       super.remove();
-      this.removed = true;
       if (shown === this) shown = undefined;
     }
   }
@@ -87,7 +104,8 @@ function createPage(random = Math.random) {
       listeners.get(type)?.delete(listener);
     },
   };
-  const elements = new Map<string, FakeElement>();
+  const input = new FakeInput();
+  const elements = new Map<string, FakeElement>([['input', input]]);
   const document = {
     getElementById(id: string) {
       if (id === '__my_overlay__') return shown;
@@ -100,10 +118,10 @@ function createPage(random = Math.random) {
       return command === 'copy';
     },
     documentElement: {
-      appendChild(image: FakeImage | FakeElement) {
-        appended.push(image);
-        if (image.id) elements.set(image.id, image);
-        if (image instanceof FakeImage) shown = image;
+      appendChild(element: FakeImage | FakeElement) {
+        appended.push(element);
+        if (element.id) elements.set(element.id, element);
+        if (element instanceof FakeImage) shown = element;
       },
     },
   };
@@ -115,19 +133,32 @@ function createPage(random = Math.random) {
       },
     },
   };
+  const URL = {
+    createObjectURL(file: FakeFile) {
+      const url = `blob:${file.webkitRelativePath}`;
+      objectUrls.push(url);
+      return url;
+    },
+    revokeObjectURL(url: string) {
+      revokedUrls.push(url);
+    },
+  };
   const install = runInNewContext(`(${installPixivBackground.toString()})`, {
     window,
     document,
+    HTMLInputElement: FakeInput,
     Image: FakeImage,
     navigator,
+    URL,
     AbortController,
     console,
     Math: { min: Math.min, max: Math.max, floor: Math.floor, round: Math.round, random },
-  }) as (images: Array<{ url: string; orientation?: 'landscape' | 'portrait' }>) => Promise<void>;
+  }) as (inputId: string) => Promise<number>;
 
   return {
     install,
     window,
+    input,
     get shown() { return shown; },
     get decodeCalls() { return decodeCalls; },
     emit(type: string, ...args: unknown[]) {
@@ -136,64 +167,65 @@ function createPage(random = Math.random) {
     get appended() { return appended; },
     get status() { return elements.get('__my_status__'); },
     get copied() { return copied; },
+    get objectUrls() { return objectUrls; },
+    get revokedUrls() { return revokedUrls; },
     cleanup() {
       (window as typeof window & { __pixivBackgroundCleanup__?: () => void }).__pixivBackgroundCleanup__?.();
     },
   };
 }
 
-test('uses Node-provided orientation metadata without classifying every image in the page', async () => {
-  const page = createPage();
-  await page.install([
-    { url: 'wide', orientation: 'landscape' },
-    { url: 'tall', orientation: 'portrait' },
+test('reads and filters images from the selected file input', async () => {
+  const page = createPage(() => 0, [
+    { name: 'wide.png', type: 'image/png', webkitRelativePath: 'selected/wide.png' },
+    { name: 'notes.txt', type: 'text/plain', webkitRelativePath: 'selected/notes.txt' },
+    { name: 'tall.jpg', type: 'image/jpeg', webkitRelativePath: 'selected/tall.jpg' },
   ]);
+  await page.install('input');
   try {
-    assert.equal(page.shown?.url, 'wide');
-    assert.equal(page.decodeCalls, 1);
+    assert.equal(page.shown?.url, 'blob:selected/wide.png');
+    assert.deepEqual(page.objectUrls, ['blob:selected/tall.jpg', 'blob:selected/wide.png']);
+    assert.equal(page.decodeCalls, 3);
   } finally {
     page.cleanup();
   }
 });
 
-test('classifies only unknown records in the browser and follows resize orientation', async () => {
+test('classifies files in the browser and follows resize orientation', async () => {
   const page = createPage();
-  await page.install([
-    { url: 'wide', orientation: 'landscape' },
-    { url: 'tall' },
-  ]);
+  await page.install('input');
   try {
-    assert.equal(page.shown?.url, 'wide');
-    assert.equal(page.decodeCalls, 2);
+    assert.equal(page.shown?.url, 'blob:selected/wide.png');
+    assert.equal(page.decodeCalls, 3);
     page.window.innerWidth = 600;
     page.window.innerHeight = 1000;
     page.emit('resize');
     await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(page.shown?.url, 'tall');
+    assert.equal(page.shown?.url, 'blob:selected/tall.jpg');
   } finally {
     page.cleanup();
   }
 });
 
 test('chooses the first injected image randomly from matching candidates', async () => {
-  const page = createPage(() => 0.999999);
-  await page.install([
-    { url: 'wide', orientation: 'landscape' },
-    { url: 'wide2', orientation: 'landscape' },
+  const page = createPage(() => 0.999999, [
+    { name: 'wide.png', type: 'image/png', webkitRelativePath: 'selected/wide.png' },
+    { name: 'wide2.png', type: 'image/png', webkitRelativePath: 'selected/wide2.png' },
   ]);
+  await page.install('input');
   try {
-    assert.equal(page.shown?.url, 'wide2');
+    assert.equal(page.shown?.url, 'blob:selected/wide2.png');
   } finally {
     page.cleanup();
   }
 });
 
 test('crossfades the old image while the new image fades in', async () => {
-  const page = createPage(() => 0.999999);
-  await page.install([
-    { url: 'wide', orientation: 'landscape' },
-    { url: 'wide2', orientation: 'landscape' },
+  const page = createPage(() => 0.999999, [
+    { name: 'wide.png', type: 'image/png', webkitRelativePath: 'selected/wide.png' },
+    { name: 'wide2.png', type: 'image/png', webkitRelativePath: 'selected/wide2.png' },
   ]);
+  await page.install('input');
   const first = page.shown!;
   try {
     page.emit('keydown', {
@@ -220,7 +252,7 @@ test('crossfades the old image while the new image fades in', async () => {
 
 test('shows the current blur and opacity while adjusting them', async () => {
   const page = createPage();
-  await page.install([{ url: 'wide', orientation: 'landscape' }]);
+  await page.install('input');
   try {
     page.emit('keydown', {
       code: 'ArrowUp',
@@ -251,9 +283,9 @@ test('shows the current blur and opacity while adjusting them', async () => {
   }
 });
 
-test('copies the current image address with the copy shortcut', async () => {
+test('copies the current image relative path with the copy shortcut', async () => {
   const page = createPage();
-  await page.install([{ url: 'wide', orientation: 'landscape' }]);
+  await page.install('input');
   try {
     page.emit('keydown', {
       code: 'KeyC',
@@ -267,9 +299,25 @@ test('copies the current image address with the copy shortcut', async () => {
       stopImmediatePropagation() {},
     });
     await new Promise((resolve) => setImmediate(resolve));
-    assert.deepEqual(page.copied, ['wide']);
+    assert.deepEqual(page.copied, ['selected/wide.png']);
     assert.equal(page.status?.textContent, '已复制');
   } finally {
     page.cleanup();
   }
+});
+
+test('revokes object URLs and removes the file input during cleanup', async () => {
+  const page = createPage();
+  await page.install('input');
+  page.cleanup();
+  assert.deepEqual(page.revokedUrls, ['blob:selected/tall.jpg', 'blob:selected/wide.png']);
+  assert.equal(page.input.removed, true);
+});
+
+test('rejects a directory without supported images', async () => {
+  const page = createPage(undefined, [
+    { name: 'notes.txt', type: 'text/plain', webkitRelativePath: 'selected/notes.txt' },
+  ]);
+  await assert.rejects(page.install('input'), /所选目录中没有支持的图片/);
+  assert.equal(page.input.removed, true);
 });

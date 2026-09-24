@@ -1,17 +1,35 @@
 // Serialized into an isolated page world: keep all runtime dependencies inside this function.
-import type { LocalImage } from './local-images.ts';
-
-export async function installPixivBackground(images: LocalImage[]) {
+export async function installPixivBackground(inputId: string) {
   const intervalMs = 60_000;
   const loadTimeoutMs = 15_000;
   const fadeDurationMs = 1000;
   const statusDurationMs = 1_500;
   type Orientation = 'landscape' | 'portrait';
+  type BackgroundImage = { url: string; path: string };
+  const supportedExtensions = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.avif', '.bmp', '.svg']);
   const state = window as typeof window & {
     __pixivBackgroundCleanup__?: () => void;
   };
   state.__pixivBackgroundCleanup__?.();
   document.getElementById('__my_overlay__')?.remove();
+
+  const input = document.getElementById(inputId);
+  if (!(input instanceof HTMLInputElement) || input.type !== 'file') {
+    throw new Error('找不到已选择图片目录的 file input');
+  }
+  const fileInput = input;
+  const files = Array.from(fileInput.files ?? [])
+    .filter((file) => supportedExtensions.has(`.${file.name.split('.').pop()?.toLowerCase() ?? ''}`))
+    .map((file) => ({ file, path: file.webkitRelativePath || file.name }))
+    .sort((a, b) => a.path.localeCompare(b.path, 'en', { numeric: true }));
+  if (files.length === 0) {
+    fileInput.remove();
+    throw new Error('所选目录中没有支持的图片');
+  }
+  const images: BackgroundImage[] = files.map(({ file, path }) => ({
+    url: URL.createObjectURL(file),
+    path,
+  }));
 
   let stopped = false;
   let timer: number | undefined;
@@ -20,6 +38,7 @@ export async function installPixivBackground(images: LocalImage[]) {
   let overlayOpacity = 0.2;
   let overlay: HTMLImageElement | undefined;
   let overlayUrl: string | undefined;
+  let overlayPath: string | undefined;
   let status: HTMLDivElement | undefined;
   let statusTimer: number | undefined;
   let rotationController: AbortController | undefined;
@@ -27,13 +46,11 @@ export async function installPixivBackground(images: LocalImage[]) {
   const pendingLoads = new Set<() => void>();
   const fadingOverlays = new Set<HTMLImageElement>();
   const fadeTimers = new Set<number>();
+  const objectUrls = new Set(images.map((image) => image.url));
   const imagesByOrientation: Record<Orientation, string[]> = { landscape: [], portrait: [] };
   const imageOrder = new Map(images.map((image, index) => [image.url, index]));
-  const unknownImages = images.filter((image) => !image.orientation).map((image) => image.url);
-
-  for (const image of images) {
-    if (image.orientation) imagesByOrientation[image.orientation].push(image.url);
-  }
+  const imageByUrl = new Map(images.map((image) => [image.url, image]));
+  const unknownImages = images.map((image) => image.url);
 
   function cleanup() {
     stopped = true;
@@ -52,6 +69,12 @@ export async function installPixivBackground(images: LocalImage[]) {
     overlay?.remove();
     status?.remove();
     status = undefined;
+    for (const url of objectUrls) URL.revokeObjectURL(url);
+    objectUrls.clear();
+    fileInput.remove();
+    if (state.__pixivBackgroundCleanup__ === cleanup) {
+      delete state.__pixivBackgroundCleanup__;
+    }
   }
   state.__pixivBackgroundCleanup__ = cleanup;
 
@@ -105,12 +128,12 @@ export async function installPixivBackground(images: LocalImage[]) {
     return copyWithTextarea(text);
   }
 
-  function copyCurrentImageUrl() {
-    if (!overlayUrl) {
-      showStatus('暂无图片地址');
+  function copyCurrentImagePath() {
+    if (!overlayPath) {
+      showStatus('暂无图片路径');
       return;
     }
-    void copyText(overlayUrl).then(
+    void copyText(overlayPath).then(
       () => showStatus('已复制'),
       () => showStatus('复制失败'),
     );
@@ -167,7 +190,7 @@ export async function installPixivBackground(images: LocalImage[]) {
           const image = await loadImage(url);
           orientations[index] = imageOrientation(image);
         } catch (error) {
-          if (!stopped) console.warn('[Pixiv 背景] 跳过无法加载或尺寸无效的图片', url, error);
+          if (!stopped) console.warn('[Pixiv 背景] 跳过无法加载或尺寸无效的图片', imageByUrl.get(url)?.path, error);
         }
       }
     }
@@ -192,13 +215,13 @@ export async function installPixivBackground(images: LocalImage[]) {
     while (!stopped && !controller.signal.aborted) {
       const candidates = candidatesForWindow();
       if (candidates.length === 0) {
-        console.log(11111)
         throw new Error('所有背景图片均无法加载或无法确定尺寸');
       }
       if (candidates.length === 1 && candidates[0] === overlayUrl) return;
 
       const alternatives = candidates.filter((url) => url !== overlayUrl);
       const url = alternatives[Math.floor(Math.random() * alternatives.length)]!;
+      const image = imageByUrl.get(url)!;
       let next: HTMLImageElement;
       try {
         next = await loadImage(url, controller.signal);
@@ -242,6 +265,7 @@ export async function installPixivBackground(images: LocalImage[]) {
       const previous = overlay;
       overlay = next;
       overlayUrl = url;
+      overlayPath = image.path;
       window.requestAnimationFrame(() => {
         if (stopped) return;
         next.style.opacity = String(overlayOpacity);
@@ -308,7 +332,7 @@ export async function installPixivBackground(images: LocalImage[]) {
     if (event.code === 'KeyC') {
       event.preventDefault();
       event.stopImmediatePropagation();
-      if (!event.repeat) copyCurrentImageUrl();
+      if (!event.repeat) copyCurrentImagePath();
       return;
     }
     if (event.code === 'ArrowUp' || event.code === 'ArrowDown') {
@@ -360,7 +384,6 @@ export async function installPixivBackground(images: LocalImage[]) {
     await classifyUnknownImages();
     if (stopped) return;
     if (candidatesForWindow().length === 0) {
-      console.log(22222);
       throw new Error('所有背景图片均无法加载或无法确定尺寸');
     }
     lastWindowOrientation = getWindowOrientation();
@@ -368,6 +391,7 @@ export async function installPixivBackground(images: LocalImage[]) {
     window.addEventListener('wheel', onWheel, { capture: true, passive: false });
     window.addEventListener('resize', onResize);
     await rotate();
+    return images.length;
   } catch (error) {
     cleanup();
     throw error;

@@ -25,7 +25,7 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "image-size": "2.0.4",
+    "image-size": "^2.0.4",
     "pixivflow": "^2.41.0"
   }
 }

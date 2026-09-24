@@ -9,7 +9,7 @@ importers:
   .:
     dependencies:
       image-size:
-        specifier: 2.0.4
+        specifier: ^2.0.4
         version: 2.0.4
       pixivflow:
         specifier: ^2.41.0

@@ -1,6 +1,7 @@
 import { parseArgs } from 'node:util';
+import { randomUUID } from 'node:crypto';
 import { chromium } from 'playwright';
-import { loadLocalImages } from './local-images.ts';
+import { resolveLocalImagesDirectory } from './local-images.ts';
 import { installPixivBackground } from './background.ts';
 
 const { values, positionals } = parseArgs({
@@ -11,14 +12,13 @@ if (values.help) {
   console.log('用法：pnpm inject [子目录]');
   console.log('默认递归读取项目 downloads/，也可指定相对于 downloads/ 的子目录。');
   console.log('示例：pnpm inject artists/1554775/artists/1554775');
-  console.log('图片通过 http://127.0.0.1:5500 提供。');
+  console.log('图片由页面通过 file input 读取，不需要启动本地文件服务。');
   process.exit(0);
 }
 if (positionals.length > 1) {
   throw new Error('inject 最多接受一个 downloads/ 子目录参数。用法：pnpm inject [子目录]');
 }
-const { directory, images } = await loadLocalImages(positionals[0]);
-console.log(`从 ${directory} 读取了 ${images.length} 张图片`);
+const directory = await resolveLocalImagesDirectory(positionals[0]);
 
 const browser = await chromium.connectOverCDP('http://127.0.0.1:9341');
 try {
@@ -26,15 +26,31 @@ try {
   const page = pages.find((candidate) => candidate.url() === 'app://-/index.html') ?? pages[0];
   if (!page) throw new Error('没有找到可注入背景的页面');
 
+  const inputId = `__pixiv_background_file_input_${randomUUID()}`;
+  await page.evaluate((id) => {
+    for (const previous of document.querySelectorAll('[data-pixiv-background-file-input]')) {
+      previous.remove();
+    }
+    const input = document.createElement('input');
+    input.id = id;
+    input.type = 'file';
+    input.multiple = true;
+    input.setAttribute('webkitdirectory', '');
+    input.setAttribute('aria-hidden', 'true');
+    input.setAttribute('data-pixiv-background-file-input', 'true');
+    Object.assign(input.style, {
+      position: 'fixed',
+      width: '1px',
+      height: '1px',
+      opacity: '0',
+      pointerEvents: 'none',
+    });
+    document.documentElement.appendChild(input);
+  }, inputId);
+  await page.locator(`#${inputId}`).setInputFiles(directory);
+
   // Reuse the named world so reinjection also cleans up the previous version.
-  // Node classifies supported files from their headers; the page handles only fallback files.
   const session = await page.context().newCDPSession(page);
-  // The app page's CSP only allows https/blob/data images, while the local
-  // Live Server intentionally serves files over http://127.0.0.1:5500. Keep
-  // this enabled after injection because the background loads later rotations.
-  console.log('Page.setBypassCSP 1')
-  await session.send('Page.setBypassCSP', { enabled: true });
-  console.log('Page.setBypassCSP 2')
   const { frameTree } = await session.send('Page.getFrameTree');
   const { executionContextId } = await session.send('Page.createIsolatedWorld', {
     frameId: frameTree.frame.id,
@@ -43,14 +59,15 @@ try {
   const result = await session.send('Runtime.callFunctionOn', {
     executionContextId,
     functionDeclaration: installPixivBackground.toString(),
-    arguments: [{ value: images }],
+    arguments: [{ value: inputId }],
     awaitPromise: true,
     returnByValue: true,
   });
   if (result.exceptionDetails) {
     throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
   }
-  console.log('downloads/ 图片 URL 已注入，按窗口横竖方向筛选并每 1 分钟轮替；⌘/Ctrl + Alt + → 切换下一张，↑/↓ 调整模糊，滚轮调整不透明度，⌘/Ctrl + Alt + C 复制图片地址，Space 显示/隐藏；程序退出后继续运行。');
+  const count = result.result?.value;
+  console.log(`从 ${directory} 选择了 ${typeof count === 'number' ? count : '若干'} 张图片，按窗口横竖方向筛选并每 1 分钟轮替；⌘/Ctrl + Alt + → 切换下一张，↑/↓ 调整模糊，滚轮调整不透明度，⌘/Ctrl + Alt + C 复制相对路径，Space 显示/隐藏；程序退出后继续运行。`);
 } finally {
   // For a CDP-connected browser this only disconnects; page timers keep running.
   await browser.close();
