@@ -1,6 +1,6 @@
 // Serialized into an isolated page world; keep this function self-contained.
 export function installPureMode() {
-  const idleDurationMs = 10_000;
+  const idleDurationMs = 30_000;
   const transitionDurationMs = 200;
   const modeAttribute = 'data-codex-pure-mode';
   const hiddenAttribute = 'data-codex-pure-mode-hidden';
@@ -46,9 +46,10 @@ export function installPureMode() {
     'keydown',
     'keyup',
   ] as const;
+  const clickEvents = ['click'] as const;
 
   function isExempt(element: Element) {
-    return element.id === '__my_overlay__' || element.id === styleId;
+    return element.id === '__my_overlay__' || element.id === '__my_status__' || element.id === styleId;
   }
 
   function clearIdleTimer() {
@@ -95,7 +96,7 @@ export function installPureMode() {
       current = parent;
     }
 
-    for (const id of ['__my_status__', '__my_progress__']) {
+    for (const id of ['__my_progress__']) {
       const element = document.getElementById(id);
       if (element instanceof HTMLElement && !isExempt(element)) nextHiddenNodes.add(element);
     }
@@ -121,6 +122,7 @@ export function installPureMode() {
   function enterPureMode() {
     if (stopped || pureModeActive || !findConversation()) return;
     pureModeActive = true;
+    document.body?.classList.add('_pure-mode_');
     root.setAttribute(modeAttribute, 'active');
     reconcileHiddenNodes();
   }
@@ -129,6 +131,7 @@ export function installPureMode() {
     if (stopped || !pureModeActive) return;
     pureModeActive = false;
     clearReconcileTimer();
+    document.body?.classList.remove('_pure-mode_');
     root.removeAttribute(modeAttribute);
   }
 
@@ -148,7 +151,12 @@ export function installPureMode() {
 
   function onActivity() {
     if (stopped) return;
-    if (pureModeActive) leavePureMode();
+    restartIdleTimer();
+  }
+
+  function onClick(event: MouseEvent) {
+    if (stopped) return;
+    if (event.detail > 0 && pureModeActive) leavePureMode();
     restartIdleTimer();
   }
 
@@ -223,11 +231,16 @@ export function installPureMode() {
     const activityHandler = onActivity as EventListener;
     const keyDownHandler = onKeyDown as EventListener;
     const keyUpHandler = onKeyUp as EventListener;
+    const clickHandler = onClick as EventListener;
     for (const eventName of activityEvents) {
       const handler = eventName === 'keydown' ? keyDownHandler :
         eventName === 'keyup' ? keyUpHandler : activityHandler;
       window.removeEventListener(eventName, handler, eventOptions);
     }
+    for (const eventName of clickEvents) {
+      window.removeEventListener(eventName, clickHandler, eventOptions);
+    }
+    document.body?.classList.remove('_pure-mode_');
     root.removeAttribute(modeAttribute);
     clearHiddenMarkers();
     style.remove();
@@ -241,10 +254,14 @@ export function installPureMode() {
   const activityHandler = onActivity as EventListener;
   const keyDownHandler = onKeyDown as EventListener;
   const keyUpHandler = onKeyUp as EventListener;
+  const clickHandler = onClick as EventListener;
   for (const eventName of activityEvents) {
     const handler = eventName === 'keydown' ? keyDownHandler :
       eventName === 'keyup' ? keyUpHandler : activityHandler;
     window.addEventListener(eventName, handler, eventOptions);
+  }
+  for (const eventName of clickEvents) {
+    window.addEventListener(eventName, clickHandler, eventOptions);
   }
 
   if (typeof MutationObserver !== 'undefined' && root) {

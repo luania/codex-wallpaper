@@ -11,6 +11,19 @@ class FakeElement {
   parentElement: FakeElement | null = null;
   children: FakeElement[] = [];
   private readonly attributes = new Map<string, string>();
+  readonly classList = {
+    add: (...tokens: string[]) => {
+      const classes = new Set((this.getAttribute('class') ?? '').split(/\s+/).filter(Boolean));
+      for (const token of tokens) classes.add(token);
+      this.setAttribute('class', [...classes].join(' '));
+    },
+    remove: (...tokens: string[]) => {
+      const classes = new Set((this.getAttribute('class') ?? '').split(/\s+/).filter(Boolean));
+      for (const token of tokens) classes.delete(token);
+      this.setAttribute('class', [...classes].join(' '));
+    },
+    contains: (token: string) => (this.getAttribute('class') ?? '').split(/\s+/).includes(token),
+  };
   readonly tagName: string;
 
   constructor(tagName = 'div') {
@@ -44,6 +57,10 @@ class FakeElement {
 
   getAttribute(name: string) {
     return this.attributes.get(name) ?? null;
+  }
+
+  hasClass(token: string) {
+    return this.classList.contains(token);
   }
 }
 
@@ -207,10 +224,11 @@ test('enters pure mode after 30 seconds and fades non-conversation UI with opaci
   assert.equal(page.install(), true);
   page.advance(30_000);
   assert.equal(page.html.getAttribute('data-codex-pure-mode'), 'active');
+  assert.equal(page.html.children.find((child) => child.tagName === 'body')?.hasClass('_pure-mode_'), true);
   assert.equal(page.sidebar.hasAttribute('data-codex-pure-mode-hidden'), true);
   assert.equal(page.composer.hasAttribute('data-codex-pure-mode-hidden'), true);
   assert.equal(page.toast.hasAttribute('data-codex-pure-mode-hidden'), true);
-  assert.equal(page.html.children.find((child) => child.id === '__my_status__')?.hasAttribute('data-codex-pure-mode-hidden'), true);
+  assert.equal(page.html.children.find((child) => child.id === '__my_status__')?.hasAttribute('data-codex-pure-mode-hidden'), false);
   assert.equal(page.conversation.hasAttribute('data-codex-pure-mode-hidden'), false);
   const style = page.html.children[0]?.children[0];
   assert.match(style?.textContent ?? '', /opacity: 0/);
@@ -218,16 +236,19 @@ test('enters pure mode after 30 seconds and fades non-conversation UI with opaci
   page.cleanup();
 });
 
-test('mouse activity wakes pure mode and restarts the idle timer', () => {
+test('mouse movement does not wake pure mode and idle timer restarts when awake', () => {
   const page = createPage();
   page.install();
-  page.advance(30_000);
+  page.advance(29_000);
   page.emit('mousemove');
-  assert.equal(page.html.hasAttribute('data-codex-pure-mode'), false);
   page.advance(29_999);
   assert.equal(page.html.hasAttribute('data-codex-pure-mode'), false);
+  assert.equal(page.html.children.find((child) => child.tagName === 'body')?.hasClass('_pure-mode_'), false);
   page.advance(1);
   assert.equal(page.html.getAttribute('data-codex-pure-mode'), 'active');
+  page.emit('mousemove');
+  assert.equal(page.html.getAttribute('data-codex-pure-mode'), 'active');
+  assert.equal(page.html.children.find((child) => child.tagName === 'body')?.hasClass('_pure-mode_'), true);
   page.cleanup();
 });
 
@@ -262,7 +283,7 @@ test('the shortcut immediately enters and exits pure mode', () => {
   page.cleanup();
 });
 
-test('releasing the shortcut does not wake pure mode, but later keyboard activity does', () => {
+test('only a mouse click wakes pure mode after the shortcut is released', () => {
   const page = createPage();
   page.install();
   const shortcut = {
@@ -284,6 +305,11 @@ test('releasing the shortcut does not wake pure mode, but later keyboard activit
   assert.equal(page.html.getAttribute('data-codex-pure-mode'), 'active');
 
   page.emit('keydown', { code: 'KeyA' });
+  page.emit('mousemove');
+  page.emit('wheel');
+  assert.equal(page.html.getAttribute('data-codex-pure-mode'), 'active');
+
+  page.emit('click', { detail: 1 });
   assert.equal(page.html.hasAttribute('data-codex-pure-mode'), false);
   page.cleanup();
 });
