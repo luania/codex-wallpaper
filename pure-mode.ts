@@ -22,6 +22,9 @@ export function installPureMode() {
     html[${modeAttribute}="active"] [${hiddenAttribute}] {
       opacity: 0 !important;
     }
+    html[${modeAttribute}="active"] main[class*="_MainContentLeftBorder_"] {
+      border-left-color: transparent !important;
+    }
   `;
   (document.head ?? root).appendChild(style);
 
