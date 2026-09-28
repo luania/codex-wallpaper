@@ -1,8 +1,11 @@
+import { readFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { loadLocalImages } from './local-images.ts';
 import { installPixivBackground } from './background.ts';
+import { installPureMode } from './pure-mode.ts';
 
 const { values, positionals } = parseArgs({
   options: { help: { type: 'boolean', short: 'h' } },
@@ -25,6 +28,18 @@ try {
   const pages = browser.contexts().flatMap((context) => context.pages());
   const page = pages.find((candidate) => candidate.url() === 'app://-/index.html') ?? pages[0];
   if (!page) throw new Error('没有找到可注入背景的页面');
+
+  const injectedCss = await readFile(fileURLToPath(new URL('./inject.css', import.meta.url)), 'utf8');
+  await page.evaluate((css) => {
+    const styleId = '__pixiv_inject_css__';
+    let style = document.getElementById(styleId) as HTMLStyleElement | null;
+    if (!style) {
+      style = document.createElement('style');
+      style.id = styleId;
+      (document.head ?? document.documentElement).appendChild(style);
+    }
+    style.textContent = css;
+  }, injectedCss);
 
   const inputId = `__pixiv_background_file_input_${randomUUID()}`;
   await page.evaluate((id) => {
@@ -56,6 +71,17 @@ try {
     frameId: frameTree.frame.id,
     worldName: '__pixiv_background__',
   });
+  const pureModeResult = await session.send('Runtime.callFunctionOn', {
+    executionContextId,
+    functionDeclaration: installPureMode.toString(),
+    awaitPromise: true,
+    returnByValue: true,
+  });
+  if (pureModeResult.exceptionDetails) {
+    throw new Error(
+      pureModeResult.exceptionDetails.exception?.description ?? pureModeResult.exceptionDetails.text,
+    );
+  }
   const result = await session.send('Runtime.callFunctionOn', {
     executionContextId,
     functionDeclaration: installPixivBackground.toString(),
@@ -67,7 +93,7 @@ try {
     throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
   }
   const count = result.result?.value;
-  console.log(`从 ${directory} 选择了 ${typeof count === 'number' ? count : '若干'} 张图片，按窗口横竖方向筛选并每 1 分钟轮替；⌘/Ctrl + Alt + → 切换下一张，↑/↓ 调整模糊，滚轮调整不透明度，⌘/Ctrl + Alt + C 复制相对路径，Space 显示/隐藏；程序退出后继续运行。`);
+  console.log(`从 ${directory} 选择了 ${typeof count === 'number' ? count : '若干'} 张图片，按窗口横竖方向筛选并每 1 分钟轮替；⌘/Ctrl + Alt + → 切换下一张，↑/↓ 调整模糊，滚轮调整不透明度，⌘/Ctrl + Alt + C 复制相对路径，Space 显示/隐藏；⌘/Ctrl + Alt + P 开关纯享模式；程序退出后继续运行。`);
 } finally {
   // For a CDP-connected browser this only disconnects; page timers keep running.
   await browser.close();

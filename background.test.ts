@@ -29,6 +29,7 @@ function createPage(
     'selected/wide.png': [1600, 900],
     'selected/wide2.png': [1400, 900],
     'selected/tall.jpg': [700, 1000],
+    'selected/tall2.jpg': [600, 1000],
   };
 
   class FakeElement {
@@ -36,8 +37,13 @@ function createPage(
     style: Record<string, string> = {};
     textContent = '';
     removed = false;
+    children: FakeElement[] = [];
 
     setAttribute() {}
+    appendChild(element: FakeElement) {
+      this.children.push(element);
+      return element;
+    }
     remove() {
       this.removed = true;
     }
@@ -175,6 +181,8 @@ function createPage(
     },
     get appended() { return appended; },
     get status() { return elements.get('__my_status__'); },
+    get progress() { return elements.get('__my_progress__'); },
+    get progressFill() { return elements.get('__my_progress__')?.children[0]; },
     get copied() { return copied; },
     get objectUrls() { return objectUrls; },
     get revokedUrls() { return revokedUrls; },
@@ -263,6 +271,76 @@ test('crossfades the old image while the new image fades in', async () => {
   }
 });
 
+test('shows a one-rotation progress bar after an image is displayed', async () => {
+  const page = createPage(() => 0, [
+    { name: 'wide.png', type: 'image/png', webkitRelativePath: 'selected/wide.png' },
+    { name: 'wide2.png', type: 'image/png', webkitRelativePath: 'selected/wide2.png' },
+  ]);
+  await page.install('input');
+  try {
+    assert.equal(page.progress?.style.position, 'fixed');
+    assert.equal(page.progress?.style.bottom, '0');
+    assert.equal(page.progress?.style.display, '');
+    assert.equal(page.progressFill?.style.width, '0%');
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const width = Number.parseFloat(page.progressFill?.style.width ?? '0');
+    assert.ok(width > 0 && width < 1, `expected a partial progress width, got ${width}%`);
+    assert.equal(page.progressFill?.style.transition, 'none');
+  } finally {
+    page.cleanup();
+  }
+});
+
+test('resets the progress bar after manual and orientation changes', async () => {
+  const page = createPage(() => 0, [
+    { name: 'wide.png', type: 'image/png', webkitRelativePath: 'selected/wide.png' },
+    { name: 'wide2.png', type: 'image/png', webkitRelativePath: 'selected/wide2.png' },
+    { name: 'tall.jpg', type: 'image/jpeg', webkitRelativePath: 'selected/tall.jpg' },
+    { name: 'tall2.jpg', type: 'image/jpeg', webkitRelativePath: 'selected/tall2.jpg' },
+  ]);
+  await page.install('input');
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.ok(Number.parseFloat(page.progressFill?.style.width ?? '0') > 0);
+
+    page.emit('keydown', {
+      code: 'ArrowRight',
+      altKey: true,
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      isComposing: false,
+      repeat: false,
+      preventDefault() {},
+      stopImmediatePropagation() {},
+    });
+    for (let index = 0; index < 8; index++) await Promise.resolve();
+    assert.equal(page.progressFill?.style.width, '0%');
+
+    page.window.innerWidth = 600;
+    page.window.innerHeight = 1000;
+    page.emit('resize');
+    for (let index = 0; index < 8; index++) await Promise.resolve();
+    assert.equal(page.progressFill?.style.width, '0%');
+  } finally {
+    page.cleanup();
+  }
+});
+
+test('hides the progress bar when only one image can rotate', async () => {
+  const page = createPage(undefined, [
+    { name: 'wide.png', type: 'image/png', webkitRelativePath: 'selected/wide.png' },
+  ]);
+  await page.install('input');
+  try {
+    assert.equal(page.progress?.style.display, 'none');
+    assert.equal(page.progressFill?.style.width, '0%');
+  } finally {
+    page.cleanup();
+  }
+});
+
 test('shows the current blur and opacity while adjusting them', async () => {
   const page = createPage();
   await page.install('input');
@@ -325,6 +403,7 @@ test('revokes object URLs and removes the file input during cleanup', async () =
   page.cleanup();
   assert.deepEqual(page.revokedUrls, ['blob:selected/wide.png']);
   assert.equal(page.input.removed, true);
+  assert.equal(page.progress?.removed, true);
 });
 
 test('rejects a directory without supported images', async () => {

@@ -1,0 +1,16 @@
+#root > div.relative.flex.flex-col {
+  background: transparent;
+}
+
+#app-shell-sidebar > div > div {
+  background: transparent;
+}
+
+main {
+  background: transparent;
+}
+
+[class^="_MainContentTopFade_"],
+.bg-gradient-to-t {
+  opacity: 0;
+}

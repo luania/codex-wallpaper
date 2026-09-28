@@ -17,6 +17,7 @@ export async function installPixivBackground(
   const supportedExtensions = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.avif', '.bmp', '.svg']);
   const state = window as typeof window & {
     __pixivBackgroundCleanup__?: () => void;
+    __pixivShowStatus__?: (message: string) => void;
   };
   state.__pixivBackgroundCleanup__?.();
   document.getElementById('__my_overlay__')?.remove();
@@ -56,6 +57,9 @@ export async function installPixivBackground(
   let overlayPath: string | undefined;
   let status: HTMLDivElement | undefined;
   let statusTimer: number | undefined;
+  let progressBar: HTMLDivElement | undefined;
+  let progressFill: HTMLDivElement | undefined;
+  let progressTimer: number | undefined;
   let rotationController: AbortController | undefined;
   let lastWindowOrientation = getWindowOrientation();
   const pendingLoads = new Set<() => void>();
@@ -79,6 +83,8 @@ export async function installPixivBackground(
     rotationController?.abort();
     window.clearTimeout(statusTimer);
     statusTimer = undefined;
+    window.clearTimeout(progressTimer);
+    progressTimer = undefined;
     for (const cancel of pendingLoads) cancel();
     for (const fadingOverlay of fadingOverlays) fadingOverlay.remove();
     fadingOverlays.clear();
@@ -86,10 +92,16 @@ export async function installPixivBackground(
     fadeTimers.clear();
     overlay?.remove();
     status?.remove();
+    progressBar?.remove();
     status = undefined;
+    progressBar = undefined;
+    progressFill = undefined;
     for (const url of objectUrls) URL.revokeObjectURL(url);
     objectUrls.clear();
     fileInput.remove();
+    if (state.__pixivShowStatus__ === showStatus) {
+      delete state.__pixivShowStatus__;
+    }
     if (state.__pixivBackgroundCleanup__ === cleanup) {
       delete state.__pixivBackgroundCleanup__;
     }
@@ -162,6 +174,7 @@ export async function installPixivBackground(
       if (status) status.style.opacity = '0';
     }, statusDurationMs);
   }
+  state.__pixivShowStatus__ = showStatus;
 
   function copyWithTextarea(text: string): Promise<void> {
     const input = document.createElement('textarea');
@@ -325,8 +338,30 @@ export async function installPixivBackground(
 
   function restartTimer() {
     window.clearTimeout(timer);
-    if (stopped || candidatesForWindow().length < 2) return;
+    timer = undefined;
+    window.clearTimeout(progressTimer);
+    progressTimer = undefined;
+    const canRotate = !stopped && candidatesForWindow().length >= 2;
+    if (progressFill) progressFill.style.width = '0%';
+    if (progressBar) progressBar.style.display = canRotate ? '' : 'none';
+    if (!canRotate) return;
+
+    const now = () => typeof performance === 'undefined' ? Date.now() : performance.now();
+    const startedAt = now();
+    function updateProgress() {
+      progressTimer = undefined;
+      if (stopped || !progressFill) return;
+      // Derive progress from elapsed time so delayed callbacks catch up without drift.
+      const elapsed = Math.min(intervalMs, Math.max(0, now() - startedAt));
+      progressFill.style.width = `${elapsed / intervalMs * 100}%`;
+      if (elapsed < intervalMs) {
+        progressTimer = window.setTimeout(updateProgress, Math.min(50, intervalMs - elapsed));
+      }
+    }
+    progressTimer = window.setTimeout(updateProgress, 50);
     timer = window.setTimeout(() => {
+      timer = undefined;
+      if (progressFill) progressFill.style.width = '100%';
       void rotate().catch((error) => console.error('[Pixiv 背景]', error));
     }, intervalMs);
   }
@@ -334,6 +369,9 @@ export async function installPixivBackground(
   function rotate(): Promise<void> {
     if (stopped) return Promise.resolve();
     window.clearTimeout(timer);
+    timer = undefined;
+    window.clearTimeout(progressTimer);
+    progressTimer = undefined;
     rotationController?.abort();
     const controller = new AbortController();
     rotationController = controller;
@@ -407,7 +445,7 @@ export async function installPixivBackground(
       position: 'fixed',
       right: '16px',
       bottom: '16px',
-      zIndex: '2147483647',
+      zIndex: '2147483640',
       maxWidth: 'calc(100vw - 32px)',
       padding: '8px 12px',
       borderRadius: '8px',
@@ -420,6 +458,29 @@ export async function installPixivBackground(
       pointerEvents: 'none',
     });
     document.documentElement.appendChild(status);
+    progressBar = document.createElement('div');
+    progressBar.id = '__my_progress__';
+    progressBar.setAttribute('aria-hidden', 'true');
+    Object.assign(progressBar.style, {
+      position: 'fixed',
+      left: '0',
+      bottom: '0',
+      width: '100vw',
+      height: '5px',
+      zIndex: '2147483647',
+      overflow: 'hidden',
+      pointerEvents: 'none',
+      display: 'none',
+    });
+    progressFill = document.createElement('div');
+    Object.assign(progressFill.style, {
+      width: '0%',
+      height: '100%',
+      background: 'rgba(0, 0, 0, 0.3)',
+      transition: 'none',
+    });
+    progressBar.appendChild(progressFill);
+    document.documentElement.appendChild(progressBar);
     if (stopped) return;
     if (candidatesForWindow().length === 0) {
       throw new Error('所有背景图片均无法加载或无法确定尺寸');
