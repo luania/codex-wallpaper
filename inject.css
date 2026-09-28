@@ -14,3 +14,26 @@ main {
 .bg-gradient-to-t {
   opacity: 0;
 }
+
+body._pure-mode_ [data-app-shell-frame] > :not([data-app-shell-workspace-row]):not(:has([data-composer-overlay-floating-ui="true"])),
+body._pure-mode_ [class*="_PageSurface_"]:not([class*="_PageSurfaceLayout_"]),
+body._pure-mode_ .app-shell-left-panel,
+body._pure-mode_ header,
+body._pure-mode_ div[data-request-input-activity-root="true"] + div,
+body._pure-mode_ div[data-floating-navigation-rail-list="true"],
+body._pure-mode_ #__my_progress__ {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transition: opacity 200ms ease;
+}
+
+body._pure-mode_ main[class*="_MainContentLeftBorder_"] {
+  border-left-color: transparent !important;
+  transform: translateX(var(--codex-pure-mode-main-shift, 0px)) !important;
+}
+
+body._pure-mode_ [data-composer-overlay-floating-ui="true"],
+body._pure-mode_ [class*="_ComposerTopMenuShell"] {
+  opacity: 1 !important;
+  pointer-events: auto;
+}

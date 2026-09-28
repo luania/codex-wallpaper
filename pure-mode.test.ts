@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
 import test from 'node:test';
 import { installPureMode } from './pure-mode.ts';
@@ -18,6 +19,7 @@ class FakeElement {
     getPropertyValue: (name: string) => this.style.properties.get(name) ?? '',
   };
   private rect = { left: 0, width: 0 };
+  private rectShift = () => 0;
   readonly classList = {
     add: (...tokens: string[]) => {
       const classes = new Set((this.getAttribute('class') ?? '').split(/\s+/).filter(Boolean));
@@ -66,36 +68,16 @@ class FakeElement {
     return this.attributes.get(name) ?? null;
   }
 
-  querySelectorAll(selector: string) {
-    const matches: FakeElement[] = [];
-    function visit(element: FakeElement) {
-      if (selector === '[data-codex-pure-mode-hidden]' && element.hasAttribute('data-codex-pure-mode-hidden')) {
-        matches.push(element);
-      } else if (selector === '[class*="_ComposerTopMenuShell"]' &&
-        (element.getAttribute('class') ?? '').includes('_ComposerTopMenuShell')) {
-        matches.push(element);
-      }
-      for (const child of element.children) visit(child);
-    }
-    for (const child of this.children) visit(child);
-    return matches;
-  }
-
-  querySelector(selector: string) {
-    return this.matches(selector) ? this : this.querySelectorAll(selector)[0] ?? null;
-  }
-
-  matches(selector: string) {
-    return selector === '[class*="_ComposerTopMenuShell"]' &&
-      (this.getAttribute('class') ?? '').includes('_ComposerTopMenuShell');
-  }
-
   setRect(rect: { left: number; width: number }) {
     this.rect = rect;
   }
 
+  setRectShiftReader(reader: () => number) {
+    this.rectShift = reader;
+  }
+
   getBoundingClientRect() {
-    const shift = Number.parseFloat(this.style.getPropertyValue('--codex-pure-mode-main-shift'));
+    const shift = this.rectShift();
     return {
       left: this.rect.left + (Number.isFinite(shift) ? shift : 0),
       width: this.rect.width,
@@ -146,9 +128,7 @@ function createPage() {
   const main = new FakeElement('main');
   main.setAttribute('class', '_MainContentLeftBorder_test_');
   main.setRect({ left: 260, width: 1180 });
-  const composerTopMenuWrapper = new FakeElement('div');
-  const composerTopMenu = new FakeElement('div');
-  composerTopMenu.setAttribute('class', '_ComposerTopMenuShell_test_');
+  main.setRectShiftReader(() => Number.parseFloat(body.style.getPropertyValue('--codex-pure-mode-main-shift')) || 0);
   const conversation = new FakeElement('div');
   conversation.setAttribute('data-thread-find-target', 'conversation');
   const composer = new FakeElement('div');
@@ -160,8 +140,6 @@ function createPage() {
   body.appendChild(appRoot);
   body.appendChild(toast);
   appRoot.appendChild(layout);
-  appRoot.appendChild(composerTopMenuWrapper);
-  composerTopMenuWrapper.appendChild(composerTopMenu);
   layout.appendChild(sidebar);
   layout.appendChild(main);
   main.appendChild(conversation);
@@ -234,10 +212,9 @@ function createPage() {
   return {
     install: installRaw,
     html,
+    body,
     sidebar,
     main,
-    composerTopMenuWrapper,
-    composerTopMenu,
     conversation,
     composer,
     toast,
@@ -280,24 +257,13 @@ function createPage() {
   };
 }
 
-test('enters pure mode after 30 seconds and fades non-conversation UI with opacity only', () => {
+test('enters pure mode with a body class and keeps node attributes untouched', () => {
   const page = createPage();
   assert.equal(page.install(), true);
   page.advance(30_000);
-  assert.equal(page.html.getAttribute('data-codex-pure-mode'), 'active');
-  assert.equal(page.html.children.find((child) => child.tagName === 'body')?.hasClass('_pure-mode_'), true);
-  assert.equal(page.sidebar.hasAttribute('data-codex-pure-mode-hidden'), true);
-  assert.equal(page.composerTopMenuWrapper.hasAttribute('data-codex-pure-mode-hidden'), false);
-  assert.equal(page.composerTopMenu.hasAttribute('data-codex-pure-mode-hidden'), false);
-  assert.equal(page.composer.hasAttribute('data-codex-pure-mode-hidden'), false);
-  assert.equal(page.toast.hasAttribute('data-codex-pure-mode-hidden'), true);
-  assert.equal(page.html.children.find((child) => child.id === '__my_status__')?.hasAttribute('data-codex-pure-mode-hidden'), false);
-  assert.equal(page.conversation.hasAttribute('data-codex-pure-mode-hidden'), false);
-  const style = page.html.children[0]?.children[0];
-  assert.match(style?.textContent ?? '', /opacity: 0/);
-  assert.match(style?.textContent ?? '', /transform: translateX\(var\(--codex-pure-mode-main-shift, 0px\)\)/);
-  assert.equal(page.main.style.getPropertyValue('--codex-pure-mode-main-shift'), '-130px');
-  assert.doesNotMatch(style?.textContent ?? '', /visibility|display:|pointer-events/);
+  assert.equal(page.body.hasClass('_pure-mode_'), true);
+  assert.equal(page.body.style.getPropertyValue('--codex-pure-mode-main-shift'), '-130px');
+  assert.equal(page.main.hasAttribute('data-codex-pure-mode-hidden'), false);
   page.cleanup();
 });
 
@@ -305,17 +271,17 @@ test('recalculates the main area shift when the viewport or layout changes', () 
   const page = createPage();
   page.install();
   page.advance(30_000);
-  assert.equal(page.main.style.getPropertyValue('--codex-pure-mode-main-shift'), '-130px');
+  assert.equal(page.body.style.getPropertyValue('--codex-pure-mode-main-shift'), '-130px');
 
   page.setInnerWidth(1200);
   page.setMainRect({ left: 200, width: 1000 });
   page.emit('resize');
-  assert.equal(page.main.style.getPropertyValue('--codex-pure-mode-main-shift'), '-100px');
+  assert.equal(page.body.style.getPropertyValue('--codex-pure-mode-main-shift'), '-100px');
 
   page.setMainRect({ left: 100, width: 1000 });
   page.replaceConversation();
   page.advance(0);
-  assert.equal(page.main.style.getPropertyValue('--codex-pure-mode-main-shift'), '0px');
+  assert.equal(page.body.style.getPropertyValue('--codex-pure-mode-main-shift'), '0px');
   page.cleanup();
 });
 
@@ -325,12 +291,11 @@ test('mouse movement does not wake pure mode and idle timer restarts when awake'
   page.advance(29_000);
   page.emit('mousemove');
   page.advance(29_999);
-  assert.equal(page.html.hasAttribute('data-codex-pure-mode'), false);
-  assert.equal(page.html.children.find((child) => child.tagName === 'body')?.hasClass('_pure-mode_'), false);
+  assert.equal(page.body.hasClass('_pure-mode_'), false);
   page.advance(1);
-  assert.equal(page.html.getAttribute('data-codex-pure-mode'), 'active');
+  assert.equal(page.body.hasClass('_pure-mode_'), true);
   page.emit('mousemove');
-  assert.equal(page.html.getAttribute('data-codex-pure-mode'), 'active');
+  assert.equal(page.body.hasClass('_pure-mode_'), true);
   assert.equal(page.html.children.find((child) => child.tagName === 'body')?.hasClass('_pure-mode_'), true);
   page.cleanup();
 });
@@ -352,18 +317,22 @@ test('the shortcut immediately enters and exits pure mode', () => {
 
   page.emit('keydown', shortcut);
   assert.equal(page.statusMessages.at(-1), '纯享模式已开启');
-  assert.equal(page.html.getAttribute('data-codex-pure-mode'), 'active');
+  assert.equal(page.body.hasClass('_pure-mode_'), true);
 
   page.emit('keydown', { ...shortcut });
   assert.equal(page.statusMessages.at(-1), '纯享模式已关闭');
-  assert.equal(page.html.hasAttribute('data-codex-pure-mode'), false);
-  assert.equal(page.main.style.getPropertyValue('--codex-pure-mode-main-shift'), '');
+  assert.equal(page.body.hasClass('_pure-mode_'), false);
+  assert.equal(page.body.style.getPropertyValue('--codex-pure-mode-main-shift'), '');
   page.advance(30_000);
-  assert.equal(page.html.hasAttribute('data-codex-pure-mode'), false);
+  assert.equal(page.body.hasClass('_pure-mode_'), true);
 
   page.emit('keydown', { ...shortcut });
-  assert.equal(page.statusMessages.at(-1), '纯享模式已开启');
-  assert.equal(page.html.getAttribute('data-codex-pure-mode'), 'active');
+  assert.equal(page.statusMessages.at(-1), '纯享模式已关闭');
+  assert.equal(page.body.hasClass('_pure-mode_'), false);
+  page.advance(29_999);
+  assert.equal(page.body.hasClass('_pure-mode_'), false);
+  page.advance(1);
+  assert.equal(page.body.hasClass('_pure-mode_'), true);
   page.cleanup();
 });
 
@@ -386,15 +355,15 @@ test('mouse clicks do not wake pure mode after the shortcut is released', () => 
   page.emit('keyup', { code: 'KeyP' });
   page.emit('keyup', { code: 'AltRight' });
   page.emit('keyup', { code: 'MetaLeft' });
-  assert.equal(page.html.getAttribute('data-codex-pure-mode'), 'active');
+  assert.equal(page.body.hasClass('_pure-mode_'), true);
 
   page.emit('keydown', { code: 'KeyA' });
   page.emit('mousemove');
   page.emit('wheel');
-  assert.equal(page.html.getAttribute('data-codex-pure-mode'), 'active');
+  assert.equal(page.body.hasClass('_pure-mode_'), true);
 
   page.emit('click', { detail: 1 });
-  assert.equal(page.html.getAttribute('data-codex-pure-mode'), 'active');
+  assert.equal(page.body.hasClass('_pure-mode_'), true);
   page.cleanup();
 });
 
@@ -414,44 +383,53 @@ test('Escape exits pure mode and allows idle mode to start again', () => {
   };
 
   page.emit('keydown', shortcut);
-  assert.equal(page.html.getAttribute('data-codex-pure-mode'), 'active');
+  assert.equal(page.body.hasClass('_pure-mode_'), true);
   page.emit('keydown', {
     code: 'Escape',
     repeat: false,
     preventDefault() {},
     stopImmediatePropagation() {},
   });
-  assert.equal(page.html.hasAttribute('data-codex-pure-mode'), false);
-  assert.equal(page.main.style.getPropertyValue('--codex-pure-mode-main-shift'), '');
+  assert.equal(page.body.hasClass('_pure-mode_'), false);
+  assert.equal(page.body.style.getPropertyValue('--codex-pure-mode-main-shift'), '');
 
   page.advance(29_999);
-  assert.equal(page.html.hasAttribute('data-codex-pure-mode'), false);
+  assert.equal(page.body.hasClass('_pure-mode_'), false);
   page.advance(1);
-  assert.equal(page.html.getAttribute('data-codex-pure-mode'), 'active');
+  assert.equal(page.body.hasClass('_pure-mode_'), true);
   page.cleanup();
 });
 
-test('reconciles hidden nodes after the conversation is replaced', () => {
+test('reconciles mode state after the conversation is replaced', () => {
   const page = createPage();
   page.install();
   page.advance(30_000);
-  page.composer.setAttribute('data-codex-pure-mode-hidden', '');
   const replacement = page.replaceConversation();
   page.advance(0);
-  assert.equal(replacement.hasAttribute('data-codex-pure-mode-hidden'), false);
-  assert.equal(page.composer.hasAttribute('data-codex-pure-mode-hidden'), false);
-  assert.equal(page.sidebar.hasAttribute('data-codex-pure-mode-hidden'), true);
+  assert.equal(page.body.hasClass('_pure-mode_'), true);
   page.cleanup();
 });
 
-test('cleanup restores the page and removes the injected style', () => {
+test('cleanup restores the page and removes the body class', () => {
   const page = createPage();
   page.install();
   page.advance(30_000);
   page.cleanup();
-  assert.equal(page.html.hasAttribute('data-codex-pure-mode'), false);
-  assert.equal(page.sidebar.hasAttribute('data-codex-pure-mode-hidden'), false);
-  assert.equal(page.composer.hasAttribute('data-codex-pure-mode-hidden'), false);
-  assert.equal(page.main.style.getPropertyValue('--codex-pure-mode-main-shift'), '');
-  assert.equal(page.html.children.some((child) => child.id === '__codex_pure_mode_style__'), false);
+  assert.equal(page.body.hasClass('_pure-mode_'), false);
+  assert.equal(page.body.style.getPropertyValue('--codex-pure-mode-main-shift'), '');
+});
+
+test('inject.css owns pure mode visibility and positioning rules', async () => {
+  const css = await readFile(new URL('./inject.css', import.meta.url), 'utf8');
+  assert.match(css, /body\.\_pure-mode_ div\[data-floating-navigation-rail-list="true"\]/);
+  assert.match(css, /body\.\_pure-mode_ \[class\*=\"_PageSurface_\"\]:not\(\[class\*=\"_PageSurfaceLayout_\"\]\)/);
+  assert.match(css, /body\.\_pure-mode_ \.app-shell-left-panel/);
+  assert.match(css, /body\.\_pure-mode_ header/);
+  assert.match(css, /body\.\_pure-mode_ div\[data-request-input-activity-root="true"\] \+ div/);
+  assert.doesNotMatch(css, /body\.\_pure-mode_ \[data-app-shell-page-surface\]/);
+  assert.match(css, /body\.\_pure-mode_ main\[class\*=\"_MainContentLeftBorder_\"\]/);
+  assert.match(css, /transform: translateX\(var\(--codex-pure-mode-main-shift, 0px\)\)/);
+  assert.match(css, /body\.\_pure-mode_ \[data-composer-overlay-floating-ui="true"\]/);
+  assert.match(css, /\:has\(\[data-composer-overlay-floating-ui="true"\]\)/);
+  assert.match(css, /transition: opacity 200ms ease/);
 });

@@ -1,12 +1,7 @@
 // Serialized into an isolated page world; keep this function self-contained.
 export function installPureMode() {
   const idleDurationMs = 30_000;
-  const transitionDurationMs = 200;
-  const modeAttribute = 'data-codex-pure-mode';
-  const hiddenAttribute = 'data-codex-pure-mode-hidden';
-  const styleId = '__codex_pure_mode_style__';
   const mainSelector = 'main[class*="_MainContentLeftBorder_"]';
-  const composerTopMenuSelector = '[class*="_ComposerTopMenuShell"]';
   const mainShiftProperty = '--codex-pure-mode-main-shift';
   const state = window as typeof window & {
     __codexPureModeCleanup__?: () => void;
@@ -16,29 +11,12 @@ export function installPureMode() {
   state.__codexPureModeCleanup__?.();
 
   const root = document.documentElement;
-  const style = document.createElement('style');
-  style.id = styleId;
-  style.textContent = `
-    [${hiddenAttribute}] {
-      transition: opacity ${transitionDurationMs}ms ease;
-    }
-    html[${modeAttribute}="active"] [${hiddenAttribute}] {
-      opacity: 0 !important;
-    }
-    html[${modeAttribute}="active"] main[class*="_MainContentLeftBorder_"] {
-      border-left-color: transparent !important;
-      transform: translateX(var(${mainShiftProperty}, 0px)) !important;
-    }
-  `;
-  (document.head ?? root).appendChild(style);
 
   let stopped = false;
-  let autoHideEnabled = true;
   let pureModeActive = false;
   let idleTimer: number | undefined;
   let reconcileTimer: number | undefined;
   let shortcutKeyUps = new Set<string>();
-  let hiddenNodes = new Set<HTMLElement>();
   let shiftedMain: HTMLElement | undefined;
   let observer: MutationObserver | undefined;
 
@@ -55,14 +33,6 @@ export function installPureMode() {
     'keyup',
   ] as const;
 
-  function isExempt(element: Element) {
-    return element.id === '__my_overlay__' ||
-      element.id === '__my_status__' ||
-      element.id === styleId ||
-      element.matches(composerTopMenuSelector) ||
-      element.querySelector(composerTopMenuSelector) !== null;
-  }
-
   function clearIdleTimer() {
     window.clearTimeout(idleTimer);
     idleTimer = undefined;
@@ -71,13 +41,6 @@ export function installPureMode() {
   function clearReconcileTimer() {
     window.clearTimeout(reconcileTimer);
     reconcileTimer = undefined;
-  }
-
-  function clearHiddenMarkers() {
-    for (const element of hiddenNodes) {
-      element.removeAttribute(hiddenAttribute);
-    }
-    hiddenNodes = new Set();
   }
 
   function findConversation() {
@@ -89,9 +52,7 @@ export function installPureMode() {
   }
 
   function clearMainShift() {
-    shiftedMain?.style.removeProperty(mainShiftProperty);
-    const currentMain = findMain();
-    if (currentMain && currentMain !== shiftedMain) currentMain.style.removeProperty(mainShiftProperty);
+    document.body?.style.removeProperty(mainShiftProperty);
     shiftedMain = undefined;
   }
 
@@ -102,23 +63,22 @@ export function installPureMode() {
       clearMainShift();
       return;
     }
-    if (shiftedMain && shiftedMain !== main) shiftedMain.style.removeProperty(mainShiftProperty);
     const rect = main.getBoundingClientRect();
     const appliedShift = shiftedMain === main ?
-      Number.parseFloat(main.style.getPropertyValue(mainShiftProperty)) : 0;
+      Number.parseFloat(document.body?.style.getPropertyValue(mainShiftProperty) ?? '') : 0;
     const currentShift = Number.isFinite(appliedShift) ? appliedShift : 0;
     const unshiftedCenter = rect.left + rect.width / 2 - currentShift;
     const shift = window.innerWidth / 2 - unshiftedCenter;
     if (!Number.isFinite(shift)) {
-      main.style.removeProperty(mainShiftProperty);
+      document.body?.style.removeProperty(mainShiftProperty);
       shiftedMain = undefined;
       return;
     }
-    main.style.setProperty(mainShiftProperty, `${shift}px`);
+    document.body?.style.setProperty(mainShiftProperty, `${shift}px`);
     shiftedMain = main;
   }
 
-  function reconcileHiddenNodes() {
+  function reconcileMode() {
     if (stopped || !pureModeActive) return;
     const conversation = findConversation();
     if (!conversation) {
@@ -127,42 +87,6 @@ export function installPureMode() {
       return;
     }
 
-    const nextHiddenNodes = new Set<HTMLElement>();
-    const main = findMain();
-    let current: HTMLElement | null = conversation;
-    while (current) {
-      const parent: HTMLElement | null = current.parentElement;
-      if (!parent) break;
-      if (parent !== main) {
-        for (const sibling of Array.from(parent.children)) {
-          if (sibling !== current && sibling instanceof HTMLElement && !isExempt(sibling)) {
-            nextHiddenNodes.add(sibling);
-          }
-        }
-      }
-      if (parent === document.body) break;
-      current = parent;
-    }
-
-    for (const id of ['__my_progress__']) {
-      const element = document.getElementById(id);
-      if (element instanceof HTMLElement && !isExempt(element)) nextHiddenNodes.add(element);
-    }
-
-    for (const element of hiddenNodes) {
-      if (nextHiddenNodes.has(element)) continue;
-      element.removeAttribute(hiddenAttribute);
-    }
-    for (const element of nextHiddenNodes) {
-      element.setAttribute(hiddenAttribute, '');
-    }
-    if (main) {
-      if (main.hasAttribute(hiddenAttribute)) main.removeAttribute(hiddenAttribute);
-      for (const element of main.querySelectorAll<HTMLElement>(`[${hiddenAttribute}]`)) {
-        element.removeAttribute(hiddenAttribute);
-      }
-    }
-    hiddenNodes = nextHiddenNodes;
     updateMainShift();
   }
 
@@ -170,7 +94,7 @@ export function installPureMode() {
     if (stopped || !pureModeActive || reconcileTimer !== undefined) return;
     reconcileTimer = window.setTimeout(() => {
       reconcileTimer = undefined;
-      reconcileHiddenNodes();
+      reconcileMode();
     }, 0);
   }
 
@@ -178,8 +102,7 @@ export function installPureMode() {
     if (stopped || pureModeActive || !findConversation()) return;
     pureModeActive = true;
     document.body?.classList.add('_pure-mode_');
-    root.setAttribute(modeAttribute, 'active');
-    reconcileHiddenNodes();
+    reconcileMode();
   }
 
   function leavePureMode() {
@@ -188,15 +111,14 @@ export function installPureMode() {
     clearReconcileTimer();
     clearMainShift();
     document.body?.classList.remove('_pure-mode_');
-    root.removeAttribute(modeAttribute);
   }
 
   function restartIdleTimer() {
     clearIdleTimer();
-    if (stopped || !autoHideEnabled || pureModeActive) return;
+    if (stopped || pureModeActive) return;
     idleTimer = window.setTimeout(() => {
       idleTimer = undefined;
-      if (!autoHideEnabled || pureModeActive) return;
+      if (pureModeActive) return;
       if (!findConversation()) {
         restartIdleTimer();
         return;
@@ -250,11 +172,9 @@ export function installPureMode() {
       event.preventDefault();
       event.stopImmediatePropagation();
       if (pureModeActive) {
-        autoHideEnabled = false;
         leavePureMode();
-        clearIdleTimer();
+        restartIdleTimer();
       } else {
-        autoHideEnabled = true;
         clearIdleTimer();
         enterPureMode();
       }
@@ -300,10 +220,7 @@ export function installPureMode() {
     }
     window.removeEventListener('resize', resizeHandler);
     document.body?.classList.remove('_pure-mode_');
-    root.removeAttribute(modeAttribute);
     clearMainShift();
-    clearHiddenMarkers();
-    style.remove();
     if (state.__codexPureModeCleanup__ === cleanup) {
       delete state.__codexPureModeCleanup__;
     }
