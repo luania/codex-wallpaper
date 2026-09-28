@@ -11,6 +11,13 @@ class FakeElement {
   parentElement: FakeElement | null = null;
   children: FakeElement[] = [];
   private readonly attributes = new Map<string, string>();
+  readonly style = {
+    properties: new Map<string, string>(),
+    setProperty: (name: string, value: string) => this.style.properties.set(name, value),
+    removeProperty: (name: string) => this.style.properties.delete(name),
+    getPropertyValue: (name: string) => this.style.properties.get(name) ?? '',
+  };
+  private rect = { left: 0, width: 0 };
   readonly classList = {
     add: (...tokens: string[]) => {
       const classes = new Set((this.getAttribute('class') ?? '').split(/\s+/).filter(Boolean));
@@ -59,6 +66,42 @@ class FakeElement {
     return this.attributes.get(name) ?? null;
   }
 
+  querySelectorAll(selector: string) {
+    const matches: FakeElement[] = [];
+    function visit(element: FakeElement) {
+      if (selector === '[data-codex-pure-mode-hidden]' && element.hasAttribute('data-codex-pure-mode-hidden')) {
+        matches.push(element);
+      } else if (selector === '[class*="_ComposerTopMenuShell"]' &&
+        (element.getAttribute('class') ?? '').includes('_ComposerTopMenuShell')) {
+        matches.push(element);
+      }
+      for (const child of element.children) visit(child);
+    }
+    for (const child of this.children) visit(child);
+    return matches;
+  }
+
+  querySelector(selector: string) {
+    return this.matches(selector) ? this : this.querySelectorAll(selector)[0] ?? null;
+  }
+
+  matches(selector: string) {
+    return selector === '[class*="_ComposerTopMenuShell"]' &&
+      (this.getAttribute('class') ?? '').includes('_ComposerTopMenuShell');
+  }
+
+  setRect(rect: { left: number; width: number }) {
+    this.rect = rect;
+  }
+
+  getBoundingClientRect() {
+    const shift = Number.parseFloat(this.style.getPropertyValue('--codex-pure-mode-main-shift'));
+    return {
+      left: this.rect.left + (Number.isFinite(shift) ? shift : 0),
+      width: this.rect.width,
+    };
+  }
+
   hasClass(token: string) {
     return this.classList.contains(token);
   }
@@ -101,6 +144,11 @@ function createPage() {
   const layout = new FakeElement('div');
   const sidebar = new FakeElement('aside');
   const main = new FakeElement('main');
+  main.setAttribute('class', '_MainContentLeftBorder_test_');
+  main.setRect({ left: 260, width: 1180 });
+  const composerTopMenuWrapper = new FakeElement('div');
+  const composerTopMenu = new FakeElement('div');
+  composerTopMenu.setAttribute('class', '_ComposerTopMenuShell_test_');
   const conversation = new FakeElement('div');
   conversation.setAttribute('data-thread-find-target', 'conversation');
   const composer = new FakeElement('div');
@@ -112,6 +160,8 @@ function createPage() {
   body.appendChild(appRoot);
   body.appendChild(toast);
   appRoot.appendChild(layout);
+  appRoot.appendChild(composerTopMenuWrapper);
+  composerTopMenuWrapper.appendChild(composerTopMenu);
   layout.appendChild(sidebar);
   layout.appendChild(main);
   main.appendChild(conversation);
@@ -129,8 +179,9 @@ function createPage() {
       return tagName === 'style' ? new FakeStyle() : new FakeElement(tagName);
     },
     querySelector(selector: string) {
-      return selector === '[data-thread-find-target="conversation"]' ?
-        bodyQueryConversation() : null;
+      if (selector === '[data-thread-find-target="conversation"]') return bodyQueryConversation();
+      if (selector === 'main[class*="_MainContentLeftBorder_"]') return main;
+      return null;
     },
     getElementById(id: string) {
       function find(element: FakeElement): FakeElement | null {
@@ -151,6 +202,7 @@ function createPage() {
   }
 
   const window = {
+    innerWidth: 1440,
     setTimeout(callback: () => void, delay: number) {
       const id = nextTimerId++;
       timers.set(id, { callback, due: now + delay });
@@ -183,12 +235,21 @@ function createPage() {
     install: installRaw,
     html,
     sidebar,
+    main,
+    composerTopMenuWrapper,
+    composerTopMenu,
     conversation,
     composer,
     toast,
     statusMessages,
     emit(type: string, event: unknown = {}) {
       for (const listener of listeners.get(type) ?? []) listener(event);
+    },
+    setMainRect(rect: { left: number; width: number }) {
+      main.setRect(rect);
+    },
+    setInnerWidth(width: number) {
+      window.innerWidth = width;
     },
     advance(milliseconds: number) {
       const target = now + milliseconds;
@@ -226,13 +287,35 @@ test('enters pure mode after 30 seconds and fades non-conversation UI with opaci
   assert.equal(page.html.getAttribute('data-codex-pure-mode'), 'active');
   assert.equal(page.html.children.find((child) => child.tagName === 'body')?.hasClass('_pure-mode_'), true);
   assert.equal(page.sidebar.hasAttribute('data-codex-pure-mode-hidden'), true);
-  assert.equal(page.composer.hasAttribute('data-codex-pure-mode-hidden'), true);
+  assert.equal(page.composerTopMenuWrapper.hasAttribute('data-codex-pure-mode-hidden'), false);
+  assert.equal(page.composerTopMenu.hasAttribute('data-codex-pure-mode-hidden'), false);
+  assert.equal(page.composer.hasAttribute('data-codex-pure-mode-hidden'), false);
   assert.equal(page.toast.hasAttribute('data-codex-pure-mode-hidden'), true);
   assert.equal(page.html.children.find((child) => child.id === '__my_status__')?.hasAttribute('data-codex-pure-mode-hidden'), false);
   assert.equal(page.conversation.hasAttribute('data-codex-pure-mode-hidden'), false);
   const style = page.html.children[0]?.children[0];
   assert.match(style?.textContent ?? '', /opacity: 0/);
+  assert.match(style?.textContent ?? '', /transform: translateX\(var\(--codex-pure-mode-main-shift, 0px\)\)/);
+  assert.equal(page.main.style.getPropertyValue('--codex-pure-mode-main-shift'), '-130px');
   assert.doesNotMatch(style?.textContent ?? '', /visibility|display:|pointer-events/);
+  page.cleanup();
+});
+
+test('recalculates the main area shift when the viewport or layout changes', () => {
+  const page = createPage();
+  page.install();
+  page.advance(30_000);
+  assert.equal(page.main.style.getPropertyValue('--codex-pure-mode-main-shift'), '-130px');
+
+  page.setInnerWidth(1200);
+  page.setMainRect({ left: 200, width: 1000 });
+  page.emit('resize');
+  assert.equal(page.main.style.getPropertyValue('--codex-pure-mode-main-shift'), '-100px');
+
+  page.setMainRect({ left: 100, width: 1000 });
+  page.replaceConversation();
+  page.advance(0);
+  assert.equal(page.main.style.getPropertyValue('--codex-pure-mode-main-shift'), '0px');
   page.cleanup();
 });
 
@@ -274,6 +357,7 @@ test('the shortcut immediately enters and exits pure mode', () => {
   page.emit('keydown', { ...shortcut });
   assert.equal(page.statusMessages.at(-1), '纯享模式已关闭');
   assert.equal(page.html.hasAttribute('data-codex-pure-mode'), false);
+  assert.equal(page.main.style.getPropertyValue('--codex-pure-mode-main-shift'), '');
   page.advance(30_000);
   assert.equal(page.html.hasAttribute('data-codex-pure-mode'), false);
 
@@ -283,7 +367,7 @@ test('the shortcut immediately enters and exits pure mode', () => {
   page.cleanup();
 });
 
-test('only a mouse click wakes pure mode after the shortcut is released', () => {
+test('mouse clicks do not wake pure mode after the shortcut is released', () => {
   const page = createPage();
   page.install();
   const shortcut = {
@@ -310,7 +394,40 @@ test('only a mouse click wakes pure mode after the shortcut is released', () => 
   assert.equal(page.html.getAttribute('data-codex-pure-mode'), 'active');
 
   page.emit('click', { detail: 1 });
+  assert.equal(page.html.getAttribute('data-codex-pure-mode'), 'active');
+  page.cleanup();
+});
+
+test('Escape exits pure mode and allows idle mode to start again', () => {
+  const page = createPage();
+  page.install();
+  const shortcut = {
+    code: 'KeyP',
+    altKey: true,
+    metaKey: true,
+    ctrlKey: false,
+    shiftKey: false,
+    isComposing: false,
+    repeat: false,
+    preventDefault() {},
+    stopImmediatePropagation() {},
+  };
+
+  page.emit('keydown', shortcut);
+  assert.equal(page.html.getAttribute('data-codex-pure-mode'), 'active');
+  page.emit('keydown', {
+    code: 'Escape',
+    repeat: false,
+    preventDefault() {},
+    stopImmediatePropagation() {},
+  });
   assert.equal(page.html.hasAttribute('data-codex-pure-mode'), false);
+  assert.equal(page.main.style.getPropertyValue('--codex-pure-mode-main-shift'), '');
+
+  page.advance(29_999);
+  assert.equal(page.html.hasAttribute('data-codex-pure-mode'), false);
+  page.advance(1);
+  assert.equal(page.html.getAttribute('data-codex-pure-mode'), 'active');
   page.cleanup();
 });
 
@@ -318,9 +435,11 @@ test('reconciles hidden nodes after the conversation is replaced', () => {
   const page = createPage();
   page.install();
   page.advance(30_000);
+  page.composer.setAttribute('data-codex-pure-mode-hidden', '');
   const replacement = page.replaceConversation();
   page.advance(0);
   assert.equal(replacement.hasAttribute('data-codex-pure-mode-hidden'), false);
+  assert.equal(page.composer.hasAttribute('data-codex-pure-mode-hidden'), false);
   assert.equal(page.sidebar.hasAttribute('data-codex-pure-mode-hidden'), true);
   page.cleanup();
 });
@@ -333,5 +452,6 @@ test('cleanup restores the page and removes the injected style', () => {
   assert.equal(page.html.hasAttribute('data-codex-pure-mode'), false);
   assert.equal(page.sidebar.hasAttribute('data-codex-pure-mode-hidden'), false);
   assert.equal(page.composer.hasAttribute('data-codex-pure-mode-hidden'), false);
+  assert.equal(page.main.style.getPropertyValue('--codex-pure-mode-main-shift'), '');
   assert.equal(page.html.children.some((child) => child.id === '__codex_pure_mode_style__'), false);
 });

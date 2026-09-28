@@ -5,6 +5,9 @@ export function installPureMode() {
   const modeAttribute = 'data-codex-pure-mode';
   const hiddenAttribute = 'data-codex-pure-mode-hidden';
   const styleId = '__codex_pure_mode_style__';
+  const mainSelector = 'main[class*="_MainContentLeftBorder_"]';
+  const composerTopMenuSelector = '[class*="_ComposerTopMenuShell"]';
+  const mainShiftProperty = '--codex-pure-mode-main-shift';
   const state = window as typeof window & {
     __codexPureModeCleanup__?: () => void;
     __pixivShowStatus__?: (message: string) => void;
@@ -24,6 +27,7 @@ export function installPureMode() {
     }
     html[${modeAttribute}="active"] main[class*="_MainContentLeftBorder_"] {
       border-left-color: transparent !important;
+      transform: translateX(var(${mainShiftProperty}, 0px)) !important;
     }
   `;
   (document.head ?? root).appendChild(style);
@@ -35,6 +39,7 @@ export function installPureMode() {
   let reconcileTimer: number | undefined;
   let shortcutKeyUps = new Set<string>();
   let hiddenNodes = new Set<HTMLElement>();
+  let shiftedMain: HTMLElement | undefined;
   let observer: MutationObserver | undefined;
 
   const eventOptions = { capture: true } as const;
@@ -49,10 +54,13 @@ export function installPureMode() {
     'keydown',
     'keyup',
   ] as const;
-  const clickEvents = ['click'] as const;
 
   function isExempt(element: Element) {
-    return element.id === '__my_overlay__' || element.id === '__my_status__' || element.id === styleId;
+    return element.id === '__my_overlay__' ||
+      element.id === '__my_status__' ||
+      element.id === styleId ||
+      element.matches(composerTopMenuSelector) ||
+      element.querySelector(composerTopMenuSelector) !== null;
   }
 
   function clearIdleTimer() {
@@ -76,6 +84,40 @@ export function installPureMode() {
     return document.querySelector<HTMLElement>('[data-thread-find-target="conversation"]');
   }
 
+  function findMain() {
+    return document.querySelector<HTMLElement>(mainSelector);
+  }
+
+  function clearMainShift() {
+    shiftedMain?.style.removeProperty(mainShiftProperty);
+    const currentMain = findMain();
+    if (currentMain && currentMain !== shiftedMain) currentMain.style.removeProperty(mainShiftProperty);
+    shiftedMain = undefined;
+  }
+
+  function updateMainShift() {
+    if (stopped || !pureModeActive) return;
+    const main = findMain();
+    if (!main) {
+      clearMainShift();
+      return;
+    }
+    if (shiftedMain && shiftedMain !== main) shiftedMain.style.removeProperty(mainShiftProperty);
+    const rect = main.getBoundingClientRect();
+    const appliedShift = shiftedMain === main ?
+      Number.parseFloat(main.style.getPropertyValue(mainShiftProperty)) : 0;
+    const currentShift = Number.isFinite(appliedShift) ? appliedShift : 0;
+    const unshiftedCenter = rect.left + rect.width / 2 - currentShift;
+    const shift = window.innerWidth / 2 - unshiftedCenter;
+    if (!Number.isFinite(shift)) {
+      main.style.removeProperty(mainShiftProperty);
+      shiftedMain = undefined;
+      return;
+    }
+    main.style.setProperty(mainShiftProperty, `${shift}px`);
+    shiftedMain = main;
+  }
+
   function reconcileHiddenNodes() {
     if (stopped || !pureModeActive) return;
     const conversation = findConversation();
@@ -86,13 +128,16 @@ export function installPureMode() {
     }
 
     const nextHiddenNodes = new Set<HTMLElement>();
+    const main = findMain();
     let current: HTMLElement | null = conversation;
     while (current) {
       const parent: HTMLElement | null = current.parentElement;
       if (!parent) break;
-      for (const sibling of Array.from(parent.children)) {
-        if (sibling !== current && sibling instanceof HTMLElement && !isExempt(sibling)) {
-          nextHiddenNodes.add(sibling);
+      if (parent !== main) {
+        for (const sibling of Array.from(parent.children)) {
+          if (sibling !== current && sibling instanceof HTMLElement && !isExempt(sibling)) {
+            nextHiddenNodes.add(sibling);
+          }
         }
       }
       if (parent === document.body) break;
@@ -111,7 +156,14 @@ export function installPureMode() {
     for (const element of nextHiddenNodes) {
       element.setAttribute(hiddenAttribute, '');
     }
+    if (main) {
+      if (main.hasAttribute(hiddenAttribute)) main.removeAttribute(hiddenAttribute);
+      for (const element of main.querySelectorAll<HTMLElement>(`[${hiddenAttribute}]`)) {
+        element.removeAttribute(hiddenAttribute);
+      }
+    }
     hiddenNodes = nextHiddenNodes;
+    updateMainShift();
   }
 
   function scheduleReconcile() {
@@ -134,6 +186,7 @@ export function installPureMode() {
     if (stopped || !pureModeActive) return;
     pureModeActive = false;
     clearReconcileTimer();
+    clearMainShift();
     document.body?.classList.remove('_pure-mode_');
     root.removeAttribute(modeAttribute);
   }
@@ -157,10 +210,8 @@ export function installPureMode() {
     restartIdleTimer();
   }
 
-  function onClick(event: MouseEvent) {
-    if (stopped) return;
-    if (event.detail > 0 && pureModeActive) leavePureMode();
-    restartIdleTimer();
+  function onResize() {
+    updateMainShift();
   }
 
   function isToggleShortcut(event: KeyboardEvent) {
@@ -175,6 +226,13 @@ export function installPureMode() {
   }
 
   function onKeyDown(event: KeyboardEvent) {
+    if (event.code === 'Escape' && pureModeActive && !event.repeat) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      leavePureMode();
+      restartIdleTimer();
+      return;
+    }
     if (isToggleShortcut(event)) {
       shortcutKeyUps = new Set(['KeyP']);
       if (event.altKey) {
@@ -234,17 +292,16 @@ export function installPureMode() {
     const activityHandler = onActivity as EventListener;
     const keyDownHandler = onKeyDown as EventListener;
     const keyUpHandler = onKeyUp as EventListener;
-    const clickHandler = onClick as EventListener;
+    const resizeHandler = onResize as EventListener;
     for (const eventName of activityEvents) {
       const handler = eventName === 'keydown' ? keyDownHandler :
         eventName === 'keyup' ? keyUpHandler : activityHandler;
       window.removeEventListener(eventName, handler, eventOptions);
     }
-    for (const eventName of clickEvents) {
-      window.removeEventListener(eventName, clickHandler, eventOptions);
-    }
+    window.removeEventListener('resize', resizeHandler);
     document.body?.classList.remove('_pure-mode_');
     root.removeAttribute(modeAttribute);
+    clearMainShift();
     clearHiddenMarkers();
     style.remove();
     if (state.__codexPureModeCleanup__ === cleanup) {
@@ -257,15 +314,13 @@ export function installPureMode() {
   const activityHandler = onActivity as EventListener;
   const keyDownHandler = onKeyDown as EventListener;
   const keyUpHandler = onKeyUp as EventListener;
-  const clickHandler = onClick as EventListener;
+  const resizeHandler = onResize as EventListener;
   for (const eventName of activityEvents) {
     const handler = eventName === 'keydown' ? keyDownHandler :
       eventName === 'keyup' ? keyUpHandler : activityHandler;
     window.addEventListener(eventName, handler, eventOptions);
   }
-  for (const eventName of clickEvents) {
-    window.addEventListener(eventName, clickHandler, eventOptions);
-  }
+  window.addEventListener('resize', resizeHandler);
 
   if (typeof MutationObserver !== 'undefined' && root) {
     observer = new MutationObserver(scheduleReconcile);
