@@ -18,8 +18,6 @@ class FakeElement {
     removeProperty: (name: string) => this.style.properties.delete(name),
     getPropertyValue: (name: string) => this.style.properties.get(name) ?? '',
   };
-  private rect = { left: 0, width: 0 };
-  private rectShift = () => 0;
   readonly classList = {
     add: (...tokens: string[]) => {
       const classes = new Set((this.getAttribute('class') ?? '').split(/\s+/).filter(Boolean));
@@ -68,22 +66,6 @@ class FakeElement {
     return this.attributes.get(name) ?? null;
   }
 
-  setRect(rect: { left: number; width: number }) {
-    this.rect = rect;
-  }
-
-  setRectShiftReader(reader: () => number) {
-    this.rectShift = reader;
-  }
-
-  getBoundingClientRect() {
-    const shift = this.rectShift();
-    return {
-      left: this.rect.left + (Number.isFinite(shift) ? shift : 0),
-      width: this.rect.width,
-    };
-  }
-
   hasClass(token: string) {
     return this.classList.contains(token);
   }
@@ -127,8 +109,6 @@ function createPage() {
   const sidebar = new FakeElement('aside');
   const main = new FakeElement('main');
   main.setAttribute('class', '_MainContentLeftBorder_test_');
-  main.setRect({ left: 260, width: 1180 });
-  main.setRectShiftReader(() => Number.parseFloat(body.style.getPropertyValue('--codex-pure-mode-main-shift')) || 0);
   const conversation = new FakeElement('div');
   conversation.setAttribute('data-thread-find-target', 'conversation');
   const composer = new FakeElement('div');
@@ -222,12 +202,6 @@ function createPage() {
     emit(type: string, event: unknown = {}) {
       for (const listener of listeners.get(type) ?? []) listener(event);
     },
-    setMainRect(rect: { left: number; width: number }) {
-      main.setRect(rect);
-    },
-    setInnerWidth(width: number) {
-      window.innerWidth = width;
-    },
     advance(milliseconds: number) {
       const target = now + milliseconds;
       while (true) {
@@ -262,26 +236,7 @@ test('enters pure mode with a body class and keeps node attributes untouched', (
   assert.equal(page.install(), true);
   page.advance(30_000);
   assert.equal(page.body.hasClass('_pure-mode_'), true);
-  assert.equal(page.body.style.getPropertyValue('--codex-pure-mode-main-shift'), '-130px');
   assert.equal(page.main.hasAttribute('data-codex-pure-mode-hidden'), false);
-  page.cleanup();
-});
-
-test('recalculates the main area shift when the viewport or layout changes', () => {
-  const page = createPage();
-  page.install();
-  page.advance(30_000);
-  assert.equal(page.body.style.getPropertyValue('--codex-pure-mode-main-shift'), '-130px');
-
-  page.setInnerWidth(1200);
-  page.setMainRect({ left: 200, width: 1000 });
-  page.emit('resize');
-  assert.equal(page.body.style.getPropertyValue('--codex-pure-mode-main-shift'), '-100px');
-
-  page.setMainRect({ left: 100, width: 1000 });
-  page.replaceConversation();
-  page.advance(0);
-  assert.equal(page.body.style.getPropertyValue('--codex-pure-mode-main-shift'), '0px');
   page.cleanup();
 });
 
@@ -322,7 +277,6 @@ test('the shortcut immediately enters and exits pure mode', () => {
   page.emit('keydown', { ...shortcut });
   assert.equal(page.statusMessages.at(-1), '纯享模式已关闭');
   assert.equal(page.body.hasClass('_pure-mode_'), false);
-  assert.equal(page.body.style.getPropertyValue('--codex-pure-mode-main-shift'), '');
   page.advance(30_000);
   assert.equal(page.body.hasClass('_pure-mode_'), true);
 
@@ -367,7 +321,7 @@ test('mouse clicks do not wake pure mode after the shortcut is released', () => 
   page.cleanup();
 });
 
-test('Escape exits pure mode and allows idle mode to start again', () => {
+test('Escape does not exit pure mode', () => {
   const page = createPage();
   page.install();
   const shortcut = {
@@ -384,15 +338,145 @@ test('Escape exits pure mode and allows idle mode to start again', () => {
 
   page.emit('keydown', shortcut);
   assert.equal(page.body.hasClass('_pure-mode_'), true);
+  let prevented = false;
+  let stopped = false;
   page.emit('keydown', {
     code: 'Escape',
     repeat: false,
+    preventDefault() {
+      prevented = true;
+    },
+    stopImmediatePropagation() {
+      stopped = true;
+    },
+  });
+  assert.equal(page.body.hasClass('_pure-mode_'), true);
+  assert.equal(prevented, false);
+  assert.equal(stopped, false);
+  page.cleanup();
+});
+
+test('holding Alt temporarily exits pure mode and restores it after release', () => {
+  const page = createPage();
+  page.install();
+  const shortcut = {
+    code: 'KeyP',
+    altKey: true,
+    metaKey: true,
+    ctrlKey: false,
+    shiftKey: false,
+    isComposing: false,
+    repeat: false,
     preventDefault() {},
     stopImmediatePropagation() {},
+  };
+
+  page.emit('keydown', shortcut);
+  page.emit('keyup', { code: 'KeyP' });
+  page.emit('keyup', { code: 'AltRight' });
+  page.emit('keyup', { code: 'MetaLeft' });
+  assert.equal(page.body.hasClass('_pure-mode_'), true);
+
+  const statusCount = page.statusMessages.length;
+  page.emit('keydown', {
+    code: 'AltLeft',
+    altKey: true,
+    metaKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    isComposing: false,
+    repeat: false,
   });
   assert.equal(page.body.hasClass('_pure-mode_'), false);
-  assert.equal(page.body.style.getPropertyValue('--codex-pure-mode-main-shift'), '');
+  assert.equal(page.statusMessages.length, statusCount);
 
+  page.advance(30_000);
+  assert.equal(page.body.hasClass('_pure-mode_'), false);
+
+  page.emit('keyup', { code: 'AltLeft' });
+  assert.equal(page.body.hasClass('_pure-mode_'), true);
+  page.cleanup();
+});
+
+test('pure mode restores only after both Alt keys are released', () => {
+  const page = createPage();
+  page.install();
+  page.advance(30_000);
+
+  const altEvent = {
+    altKey: true,
+    metaKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    isComposing: false,
+    repeat: false,
+  };
+  page.emit('keydown', { ...altEvent, code: 'AltLeft' });
+  page.emit('keydown', { ...altEvent, code: 'AltRight' });
+  page.emit('keyup', { code: 'AltLeft' });
+  assert.equal(page.body.hasClass('_pure-mode_'), false);
+  page.emit('keyup', { code: 'AltRight' });
+  assert.equal(page.body.hasClass('_pure-mode_'), true);
+  page.cleanup();
+});
+
+test('Alt used with another modifier does not temporarily exit pure mode', () => {
+  const page = createPage();
+  page.install();
+  page.advance(30_000);
+
+  for (const modifier of ['metaKey', 'ctrlKey', 'shiftKey'] as const) {
+    page.emit('keydown', {
+      code: 'AltLeft',
+      altKey: true,
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      isComposing: false,
+      repeat: false,
+      [modifier]: true,
+    });
+    assert.equal(page.body.hasClass('_pure-mode_'), true);
+    page.emit('keyup', { code: 'AltLeft' });
+  }
+
+  page.cleanup();
+});
+
+test('the P shortcut permanently closes pure mode during an Alt hold', () => {
+  const page = createPage();
+  page.install();
+  page.advance(30_000);
+
+  page.emit('keydown', {
+    code: 'AltLeft',
+    altKey: true,
+    metaKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    isComposing: false,
+    repeat: false,
+  });
+  assert.equal(page.body.hasClass('_pure-mode_'), false);
+
+  const shortcut = {
+    code: 'KeyP',
+    altKey: true,
+    metaKey: true,
+    ctrlKey: false,
+    shiftKey: false,
+    isComposing: false,
+    repeat: false,
+    preventDefault() {},
+    stopImmediatePropagation() {},
+  };
+  page.emit('keydown', shortcut);
+  assert.equal(page.body.hasClass('_pure-mode_'), false);
+  assert.equal(page.statusMessages.at(-1), '纯享模式已关闭');
+
+  page.emit('keyup', { code: 'KeyP' });
+  page.emit('keyup', { code: 'AltLeft' });
+  page.emit('keyup', { code: 'MetaLeft' });
   page.advance(29_999);
   assert.equal(page.body.hasClass('_pure-mode_'), false);
   page.advance(1);
@@ -416,10 +500,9 @@ test('cleanup restores the page and removes the body class', () => {
   page.advance(30_000);
   page.cleanup();
   assert.equal(page.body.hasClass('_pure-mode_'), false);
-  assert.equal(page.body.style.getPropertyValue('--codex-pure-mode-main-shift'), '');
 });
 
-test('inject.css owns pure mode visibility and positioning rules', async () => {
+test('inject.css owns pure mode visibility rules', async () => {
   const css = await readFile(new URL('./inject.css', import.meta.url), 'utf8');
   assert.match(css, /body\.\_pure-mode_ div\[data-floating-navigation-rail-list="true"\]/);
   assert.match(css, /body\.\_pure-mode_ \[class\*=\"_PageSurface_\"\]:not\(\[class\*=\"_PageSurfaceLayout_\"\]\)/);
@@ -428,7 +511,7 @@ test('inject.css owns pure mode visibility and positioning rules', async () => {
   assert.match(css, /body\.\_pure-mode_ div\[data-request-input-activity-root="true"\] \+ div/);
   assert.doesNotMatch(css, /body\.\_pure-mode_ \[data-app-shell-page-surface\]/);
   assert.match(css, /body\.\_pure-mode_ main\[class\*=\"_MainContentLeftBorder_\"\]/);
-  assert.match(css, /transform: translateX\(var\(--codex-pure-mode-main-shift, 0px\)\)/);
+  assert.doesNotMatch(css, /translateX/);
   assert.match(css, /body\.\_pure-mode_ \[data-composer-overlay-floating-ui="true"\]/);
   assert.match(css, /\:has\(\[data-composer-overlay-floating-ui="true"\]\)/);
   assert.match(css, /transition: opacity 200ms ease/);

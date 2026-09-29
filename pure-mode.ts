@@ -1,8 +1,6 @@
 // Serialized into an isolated page world; keep this function self-contained.
 export function installPureMode() {
   const idleDurationMs = 30_000;
-  const mainSelector = 'main[class*="_MainContentLeftBorder_"]';
-  const mainShiftProperty = '--codex-pure-mode-main-shift';
   const state = window as typeof window & {
     __codexPureModeCleanup__?: () => void;
     __pixivShowStatus__?: (message: string) => void;
@@ -14,10 +12,10 @@ export function installPureMode() {
 
   let stopped = false;
   let pureModeActive = false;
+  let altKeysDown = new Set<string>();
   let idleTimer: number | undefined;
   let reconcileTimer: number | undefined;
   let shortcutKeyUps = new Set<string>();
-  let shiftedMain: HTMLElement | undefined;
   let observer: MutationObserver | undefined;
 
   const eventOptions = { capture: true } as const;
@@ -47,51 +45,22 @@ export function installPureMode() {
     return document.querySelector<HTMLElement>('[data-thread-find-target="conversation"]');
   }
 
-  function findMain() {
-    return document.querySelector<HTMLElement>(mainSelector);
-  }
-
-  function clearMainShift() {
-    document.body?.style.removeProperty(mainShiftProperty);
-    shiftedMain = undefined;
-  }
-
-  function updateMainShift() {
-    if (stopped || !pureModeActive) return;
-    const main = findMain();
-    if (!main) {
-      clearMainShift();
-      return;
-    }
-    const rect = main.getBoundingClientRect();
-    const appliedShift = shiftedMain === main ?
-      Number.parseFloat(document.body?.style.getPropertyValue(mainShiftProperty) ?? '') : 0;
-    const currentShift = Number.isFinite(appliedShift) ? appliedShift : 0;
-    const unshiftedCenter = rect.left + rect.width / 2 - currentShift;
-    const shift = window.innerWidth / 2 - unshiftedCenter;
-    if (!Number.isFinite(shift)) {
-      document.body?.style.removeProperty(mainShiftProperty);
-      shiftedMain = undefined;
-      return;
-    }
-    document.body?.style.setProperty(mainShiftProperty, `${shift}px`);
-    shiftedMain = main;
+  function isPureModeVisible() {
+    return pureModeActive && altKeysDown.size === 0;
   }
 
   function reconcileMode() {
-    if (stopped || !pureModeActive) return;
+    if (stopped || !isPureModeVisible()) return;
     const conversation = findConversation();
     if (!conversation) {
       leavePureMode();
       restartIdleTimer();
       return;
     }
-
-    updateMainShift();
   }
 
   function scheduleReconcile() {
-    if (stopped || !pureModeActive || reconcileTimer !== undefined) return;
+    if (stopped || !isPureModeVisible() || reconcileTimer !== undefined) return;
     reconcileTimer = window.setTimeout(() => {
       reconcileTimer = undefined;
       reconcileMode();
@@ -101,16 +70,25 @@ export function installPureMode() {
   function enterPureMode() {
     if (stopped || pureModeActive || !findConversation()) return;
     pureModeActive = true;
-    document.body?.classList.add('_pure-mode_');
-    reconcileMode();
+    updatePureModeVisibility();
   }
 
   function leavePureMode() {
     if (stopped || !pureModeActive) return;
     pureModeActive = false;
     clearReconcileTimer();
-    clearMainShift();
     document.body?.classList.remove('_pure-mode_');
+  }
+
+  function updatePureModeVisibility() {
+    if (stopped) return;
+    if (!isPureModeVisible()) {
+      clearReconcileTimer();
+      document.body?.classList.remove('_pure-mode_');
+      return;
+    }
+    document.body?.classList.add('_pure-mode_');
+    reconcileMode();
   }
 
   function restartIdleTimer() {
@@ -132,10 +110,6 @@ export function installPureMode() {
     restartIdleTimer();
   }
 
-  function onResize() {
-    updateMainShift();
-  }
-
   function isToggleShortcut(event: KeyboardEvent) {
     return (
       event.code === 'KeyP' &&
@@ -147,15 +121,32 @@ export function installPureMode() {
     );
   }
 
+  function isAltKey(event: KeyboardEvent) {
+    return event.code === 'AltLeft' || event.code === 'AltRight';
+  }
+
+  function isStandaloneAltKey(event: KeyboardEvent) {
+    return (
+      isAltKey(event) &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.shiftKey &&
+      !event.isComposing
+    );
+  }
+
   function onKeyDown(event: KeyboardEvent) {
-    if (event.code === 'Escape' && pureModeActive && !event.repeat) {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      leavePureMode();
-      restartIdleTimer();
+    if (isStandaloneAltKey(event) && !event.repeat) {
+      altKeysDown.add(event.code);
+      if (pureModeActive) {
+        updatePureModeVisibility();
+      } else {
+        onActivity();
+      }
       return;
     }
     if (isToggleShortcut(event)) {
+      altKeysDown.clear();
       shortcutKeyUps = new Set(['KeyP']);
       if (event.altKey) {
         shortcutKeyUps.add('AltLeft');
@@ -199,6 +190,15 @@ export function installPureMode() {
       }
       return;
     }
+    if (isAltKey(event)) {
+      const wasTracked = altKeysDown.delete(event.code);
+      if (pureModeActive && wasTracked && altKeysDown.size === 0) {
+        updatePureModeVisibility();
+      } else if (!pureModeActive) {
+        onActivity();
+      }
+      return;
+    }
     onActivity();
   }
 
@@ -209,18 +209,16 @@ export function installPureMode() {
     observer?.disconnect();
     observer = undefined;
     shortcutKeyUps.clear();
+    altKeysDown.clear();
     const activityHandler = onActivity as EventListener;
     const keyDownHandler = onKeyDown as EventListener;
     const keyUpHandler = onKeyUp as EventListener;
-    const resizeHandler = onResize as EventListener;
     for (const eventName of activityEvents) {
       const handler = eventName === 'keydown' ? keyDownHandler :
         eventName === 'keyup' ? keyUpHandler : activityHandler;
       window.removeEventListener(eventName, handler, eventOptions);
     }
-    window.removeEventListener('resize', resizeHandler);
     document.body?.classList.remove('_pure-mode_');
-    clearMainShift();
     if (state.__codexPureModeCleanup__ === cleanup) {
       delete state.__codexPureModeCleanup__;
     }
@@ -231,13 +229,11 @@ export function installPureMode() {
   const activityHandler = onActivity as EventListener;
   const keyDownHandler = onKeyDown as EventListener;
   const keyUpHandler = onKeyUp as EventListener;
-  const resizeHandler = onResize as EventListener;
   for (const eventName of activityEvents) {
     const handler = eventName === 'keydown' ? keyDownHandler :
       eventName === 'keyup' ? keyUpHandler : activityHandler;
     window.addEventListener(eventName, handler, eventOptions);
   }
-  window.addEventListener('resize', resizeHandler);
 
   if (typeof MutationObserver !== 'undefined' && root) {
     observer = new MutationObserver(scheduleReconcile);

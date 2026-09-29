@@ -1,13 +1,8 @@
-#root > div.relative.flex.flex-col {
-  background: transparent;
-}
-
-#app-shell-sidebar > div > div {
-  background: transparent;
-}
-
-main {
-  background: transparent;
+#root > div.relative.flex.flex-col,
+#app-shell-sidebar > div > div,
+main, 
+aside {
+  background: transparent!important;
 }
 
 [class^="_MainContentTopFade_"],
@@ -31,7 +26,6 @@ body._pure-mode_ #__my_progress__ {
 
 body._pure-mode_ main[class*="_MainContentLeftBorder_"] {
   border-left-color: transparent !important;
-  transform: translateX(var(--codex-pure-mode-main-shift, 0px)) !important;
 }
 
 body._pure-mode_ [data-composer-overlay-floating-ui="true"],
