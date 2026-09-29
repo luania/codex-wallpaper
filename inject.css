@@ -14,13 +14,15 @@ main {
 .bg-gradient-to-t {
   opacity: 0;
 }
+div[data-floating-navigation-rail-list="true"] {
+  display: none;
+}
 
 body._pure-mode_ [data-app-shell-frame] > :not([data-app-shell-workspace-row]):not(:has([data-composer-overlay-floating-ui="true"])),
 body._pure-mode_ [class*="_PageSurface_"]:not([class*="_PageSurfaceLayout_"]),
 body._pure-mode_ .app-shell-left-panel,
 body._pure-mode_ header,
 body._pure-mode_ div[data-request-input-activity-root="true"] + div,
-body._pure-mode_ div[data-floating-navigation-rail-list="true"],
 body._pure-mode_ #__my_progress__ {
   opacity: 0 !important;
   pointer-events: none !important;
