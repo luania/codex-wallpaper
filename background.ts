@@ -7,6 +7,7 @@ export async function installPixivBackground(
   const loadTimeoutMs = 15_000;
   const fadeDurationMs = 1000;
   const statusDurationMs = 1_500;
+  const maxHistoryEntries = 1 + 20;
   type Orientation = 'landscape' | 'portrait';
   type BackgroundImage = {
     file: File;
@@ -61,6 +62,8 @@ export async function installPixivBackground(
   let progressFill: HTMLDivElement | undefined;
   let progressTimer: number | undefined;
   let rotationController: AbortController | undefined;
+  const timeline: BackgroundImage[] = [];
+  let timelineIndex = -1;
   let lastWindowOrientation = getWindowOrientation();
   const pendingLoads = new Set<() => void>();
   const fadingOverlays = new Set<HTMLImageElement>();
@@ -217,6 +220,36 @@ export async function installPixivBackground(
     );
   }
 
+  function discardForwardHistory() {
+    if (timelineIndex < 0 || timelineIndex >= timeline.length - 1) return;
+    timeline.splice(timelineIndex + 1);
+  }
+
+  function recordDisplayedImage(image: BackgroundImage) {
+    discardForwardHistory();
+    timeline.push(image);
+    if (timeline.length > maxHistoryEntries) timeline.shift();
+    timelineIndex = timeline.length - 1;
+  }
+
+  function findPreviousHistoryIndex() {
+    const candidates = new Set(candidatesForWindow());
+    for (let index = timelineIndex - 1; index >= 0; index--) {
+      const image = timeline[index];
+      if (image && candidates.has(image)) return index;
+    }
+    return -1;
+  }
+
+  function findNextHistoryIndex() {
+    const candidates = new Set(candidatesForWindow());
+    for (let index = timelineIndex + 1; index < timeline.length; index++) {
+      const image = timeline[index];
+      if (image && candidates.has(image)) return index;
+    }
+    return -1;
+  }
+
   function loadImage(source: BackgroundImage, signal?: AbortSignal): Promise<HTMLImageElement> {
     return new Promise((resolve, reject) => {
       const image = new Image();
@@ -257,6 +290,81 @@ export async function installPixivBackground(
     });
   }
 
+  async function showImage(
+    image: BackgroundImage,
+    controller: AbortController,
+    historyIndex?: number,
+  ): Promise<'shown' | 'skipped' | 'aborted'> {
+    let next: HTMLImageElement;
+    try {
+      next = await loadImage(image, controller.signal);
+    } catch (error) {
+      if (stopped || controller.signal.aborted) return 'aborted';
+      console.warn('[Pixiv 背景] 跳过无法加载的图片', image.path, error);
+      removeImageFromPools(image);
+      return 'skipped';
+    }
+    if (stopped || controller.signal.aborted) {
+      next.remove();
+      releaseImageUrl(image);
+      return 'aborted';
+    }
+
+    // Metadata is fast for normal files; verify only files whose metadata was unavailable.
+    const actualOrientation = imageOrientation(next);
+    if (image.orientation !== actualOrientation) setImageOrientation(image, actualOrientation);
+    // Recheck the latest viewport even if its resize event has not been delivered yet.
+    if (!candidatesForWindow().includes(image)) {
+      next.remove();
+      releaseImageUrl(image);
+      return 'skipped';
+    }
+
+    next.id = '__my_overlay__';
+    next.alt = '';
+    next.setAttribute('aria-hidden', 'true');
+    Object.assign(next.style, {
+      position: 'fixed',
+      inset: '0',
+      width: '100vw',
+      height: '100vh',
+      objectFit: 'cover',
+      objectPosition: 'center',
+      opacity: String(overlayOpacity),
+      filter: `blur(${blurPx}px)`,
+      transition: `opacity ${fadeDurationMs}ms ease`,
+      mixBlendMode: 'screen',
+      zIndex: '2147483646',
+      pointerEvents: 'none',
+    });
+    next.style.display = foregroundVisible ? '' : 'none';
+    next.style.opacity = '0';
+    document.documentElement.appendChild(next);
+    const previous = overlay;
+    const previousImage = overlayImage;
+    overlay = next;
+    overlayImage = image;
+    overlayPath = image.path;
+    if (historyIndex === undefined) recordDisplayedImage(image);
+    else timelineIndex = historyIndex;
+    window.requestAnimationFrame(() => {
+      if (stopped) return;
+      next.style.opacity = String(overlayOpacity);
+      if (!previous) return;
+      fadingOverlays.add(previous);
+      previous.style.transition = `opacity ${fadeDurationMs}ms ease`;
+      previous.style.opacity = '0';
+      const fadeTimer = window.setTimeout(() => {
+        previous.remove();
+        if (previousImage && previousImage !== overlayImage) releaseImageUrl(previousImage);
+        fadingOverlays.delete(previous);
+        fadeTimers.delete(fadeTimer);
+      }, fadeDurationMs);
+      fadeTimers.add(fadeTimer);
+    });
+    return 'shown';
+  }
+
   async function showNext(controller: AbortController) {
     while (!stopped && !controller.signal.aborted) {
       const candidates = candidatesForWindow();
@@ -267,72 +375,35 @@ export async function installPixivBackground(
 
       const alternatives = candidates.filter((image) => image !== overlayImage);
       const image = alternatives[Math.floor(Math.random() * alternatives.length)]!;
-      let next: HTMLImageElement;
-      try {
-        next = await loadImage(image, controller.signal);
-      } catch (error) {
-        if (stopped || controller.signal.aborted) return;
-        console.warn('[Pixiv 背景] 跳过无法加载的图片', image.path, error);
-        removeImageFromPools(image);
-        continue;
-      }
-      if (stopped || controller.signal.aborted) {
-        next.remove();
-        releaseImageUrl(image);
+      const result = await showImage(image, controller);
+      if (result === 'shown' || result === 'aborted') return;
+    }
+  }
+
+  async function showPrevious(controller: AbortController) {
+    while (!stopped && !controller.signal.aborted) {
+      const index = findPreviousHistoryIndex();
+      if (index < 0) {
+        showStatus('没有更多历史图片');
         return;
       }
+      const result = await showImage(timeline[index]!, controller, index);
+      if (result === 'shown' || result === 'aborted') return;
+      timeline.splice(index, 1);
+      if (timelineIndex >= index) timelineIndex--;
+    }
+  }
 
-      // Metadata is fast for normal files; verify only files whose metadata was unavailable.
-      const actualOrientation = imageOrientation(next);
-      if (image.orientation !== actualOrientation) setImageOrientation(image, actualOrientation);
-      // Recheck the latest viewport even if its resize event has not been delivered yet.
-      if (!candidatesForWindow().includes(image)) {
-        next.remove();
-        releaseImageUrl(image);
-        continue;
+  async function showNextHistory(controller: AbortController) {
+    while (!stopped && !controller.signal.aborted) {
+      const index = findNextHistoryIndex();
+      if (index < 0) {
+        showStatus('已经是最新图片');
+        return;
       }
-
-      next.id = '__my_overlay__';
-      next.alt = '';
-      next.setAttribute('aria-hidden', 'true');
-      Object.assign(next.style, {
-        position: 'fixed',
-        inset: '0',
-        width: '100vw',
-        height: '100vh',
-        objectFit: 'cover',
-        objectPosition: 'center',
-        opacity: String(overlayOpacity),
-        filter: `blur(${blurPx}px)`,
-        transition: `opacity ${fadeDurationMs}ms ease`,
-        mixBlendMode: 'screen',
-        zIndex: '2147483646',
-        pointerEvents: 'none',
-      });
-      next.style.display = foregroundVisible ? '' : 'none';
-      next.style.opacity = '0';
-      document.documentElement.appendChild(next);
-      const previous = overlay;
-      const previousImage = overlayImage;
-      overlay = next;
-      overlayImage = image;
-      overlayPath = image.path;
-      window.requestAnimationFrame(() => {
-        if (stopped) return;
-        next.style.opacity = String(overlayOpacity);
-        if (!previous) return;
-        fadingOverlays.add(previous);
-        previous.style.transition = `opacity ${fadeDurationMs}ms ease`;
-        previous.style.opacity = '0';
-        const fadeTimer = window.setTimeout(() => {
-          previous.remove();
-          if (previousImage && previousImage !== overlayImage) releaseImageUrl(previousImage);
-          fadingOverlays.delete(previous);
-          fadeTimers.delete(fadeTimer);
-        }, fadeDurationMs);
-        fadeTimers.add(fadeTimer);
-      });
-      return;
+      const result = await showImage(timeline[index]!, controller, index);
+      if (result === 'shown' || result === 'aborted') return;
+      timeline.splice(index, 1);
     }
   }
 
@@ -368,6 +439,7 @@ export async function installPixivBackground(
 
   function rotate(): Promise<void> {
     if (stopped) return Promise.resolve();
+    discardForwardHistory();
     window.clearTimeout(timer);
     timer = undefined;
     window.clearTimeout(progressTimer);
@@ -376,6 +448,44 @@ export async function installPixivBackground(
     const controller = new AbortController();
     rotationController = controller;
     const rotation = showNext(controller).finally(() => {
+      if (rotationController === controller) {
+        rotationController = undefined;
+        restartTimer();
+      }
+    });
+    return rotation;
+  }
+
+  function goToPrevious(): Promise<void> {
+    if (stopped || rotationController) return Promise.resolve();
+    window.clearTimeout(timer);
+    timer = undefined;
+    window.clearTimeout(progressTimer);
+    progressTimer = undefined;
+    const controller = new AbortController();
+    rotationController = controller;
+    const rotation = showPrevious(controller).finally(() => {
+      if (rotationController === controller) {
+        rotationController = undefined;
+        restartTimer();
+      }
+    });
+    return rotation;
+  }
+
+  function goToNext(): Promise<void> {
+    if (stopped || rotationController) return Promise.resolve();
+    if (timelineIndex >= timeline.length - 1) {
+      if (candidatesForWindow().length < 2) return Promise.resolve();
+      return rotate();
+    }
+    window.clearTimeout(timer);
+    timer = undefined;
+    window.clearTimeout(progressTimer);
+    progressTimer = undefined;
+    const controller = new AbortController();
+    rotationController = controller;
+    const rotation = showNextHistory(controller).finally(() => {
       if (rotationController === controller) {
         rotationController = undefined;
         restartTimer();
@@ -429,11 +539,17 @@ export async function installPixivBackground(
       }
       return;
     }
-    if (event.code !== 'ArrowRight' || candidatesForWindow().length < 2) return;
+    if (event.code === 'ArrowLeft') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (!event.repeat) void goToPrevious().catch((error) => console.error('[Pixiv 背景]', error));
+      return;
+    }
+    if (event.code !== 'ArrowRight') return;
     event.preventDefault();
     event.stopImmediatePropagation();
     if (event.repeat || rotationController) return;
-    void rotate().catch((error) => console.error('[Pixiv 背景]', error));
+    void goToNext().catch((error) => console.error('[Pixiv 背景]', error));
   }
 
   try {

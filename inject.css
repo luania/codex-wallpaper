@@ -13,6 +13,16 @@ div[data-floating-navigation-rail-list="true"] {
   display: none;
 }
 
+body [data-app-shell-frame] > :not([data-app-shell-workspace-row]):not(:has([data-composer-overlay-floating-ui="true"])),
+body [class*="_PageSurface_"]:not([class*="_PageSurfaceLayout_"]),
+body .app-shell-left-panel,
+body header,
+body div[data-request-input-activity-root="true"] + div,
+body #__my_progress__ {
+  opacity: 1;
+  transition: opacity 200ms ease;
+}
+
 body._pure-mode_ [data-app-shell-frame] > :not([data-app-shell-workspace-row]):not(:has([data-composer-overlay-floating-ui="true"])),
 body._pure-mode_ [class*="_PageSurface_"]:not([class*="_PageSurfaceLayout_"]),
 body._pure-mode_ .app-shell-left-panel,
@@ -21,11 +31,19 @@ body._pure-mode_ div[data-request-input-activity-root="true"] + div,
 body._pure-mode_ #__my_progress__ {
   opacity: 0 !important;
   pointer-events: none !important;
-  transition: opacity 200ms ease;
 }
 
 body._pure-mode_ main[class*="_MainContentLeftBorder_"] {
   border-left-color: transparent !important;
+}
+
+body main[class*="_MainContentLeftBorder_"] {
+  transform: translateX(0px);
+  transition: all 200ms ease;
+}
+body._pure-mode_ main[class*="_MainContentLeftBorder_"] {
+  border-left-color: transparent !important;
+  transform: translateX(-200px);
 }
 
 body._pure-mode_ [data-composer-overlay-floating-ui="true"],

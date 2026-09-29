@@ -28,6 +28,7 @@ function createPage(
   const sizes: Record<string, [number, number]> = {
     'selected/wide.png': [1600, 900],
     'selected/wide2.png': [1400, 900],
+    'selected/wide3.png': [1200, 800],
     'selected/tall.jpg': [700, 1000],
     'selected/tall2.jpg': [600, 1000],
   };
@@ -266,6 +267,142 @@ test('crossfades the old image while the new image fades in', async () => {
     assert.equal(first.removed, false);
     await new Promise((resolve) => setTimeout(resolve, 1050));
     assert.equal(first.removed, true);
+  } finally {
+    page.cleanup();
+  }
+});
+
+test('goes back through displayed images with the left shortcut', async () => {
+  const page = createPage(() => 0, [
+    { name: 'wide.png', type: 'image/png', webkitRelativePath: 'selected/wide.png' },
+    { name: 'wide2.png', type: 'image/png', webkitRelativePath: 'selected/wide2.png' },
+  ]);
+  await page.install('input');
+  const shortcut = (code: string, modifiers: Partial<{ metaKey: boolean; ctrlKey: boolean }> = {}) => ({
+    code,
+    altKey: true,
+    metaKey: modifiers.metaKey ?? false,
+    ctrlKey: modifiers.ctrlKey ?? true,
+    shiftKey: false,
+    isComposing: false,
+    repeat: false,
+    preventDefault() {},
+    stopImmediatePropagation() {},
+  });
+  try {
+    page.emit('keydown', shortcut('ArrowRight'));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(page.shown?.url, 'blob:selected/wide2.png');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.ok(Number.parseFloat(page.progressFill?.style.width ?? '0') > 0);
+
+    page.emit('keydown', shortcut('ArrowLeft'));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(page.shown?.url, 'blob:selected/wide.png');
+    assert.equal(page.progressFill?.style.width, '0%');
+
+    page.emit('keydown', shortcut('ArrowLeft'));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(page.status?.textContent, '没有更多历史图片');
+
+    page.emit('keydown', { ...shortcut('ArrowLeft'), repeat: true });
+    assert.equal(page.status?.textContent, '没有更多历史图片');
+  } finally {
+    page.cleanup();
+  }
+});
+
+test('moves forward through history before resuming random rotation', async () => {
+  const page = createPage(() => 0.999999, [
+    { name: 'wide.png', type: 'image/png', webkitRelativePath: 'selected/wide.png' },
+    { name: 'wide2.png', type: 'image/png', webkitRelativePath: 'selected/wide2.png' },
+    { name: 'wide3.png', type: 'image/png', webkitRelativePath: 'selected/wide3.png' },
+  ]);
+  await page.install('input');
+  const shortcut = (code: string) => ({
+    code,
+    altKey: true,
+    metaKey: true,
+    ctrlKey: false,
+    shiftKey: false,
+    isComposing: false,
+    repeat: false,
+    preventDefault() {},
+    stopImmediatePropagation() {},
+  });
+  try {
+    assert.equal(page.shown?.url, 'blob:selected/wide3.png');
+    page.emit('keydown', shortcut('ArrowRight'));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(page.shown?.url, 'blob:selected/wide2.png');
+
+    page.emit('keydown', shortcut('ArrowLeft'));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(page.shown?.url, 'blob:selected/wide3.png');
+
+    page.emit('keydown', shortcut('ArrowRight'));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(page.shown?.url, 'blob:selected/wide2.png');
+
+    page.emit('keydown', shortcut('ArrowLeft'));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(page.shown?.url, 'blob:selected/wide3.png');
+
+    page.emit('keydown', shortcut('ArrowRight'));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(page.shown?.url, 'blob:selected/wide2.png');
+
+    page.emit('keydown', shortcut('ArrowLeft'));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(page.shown?.url, 'blob:selected/wide3.png');
+
+    page.emit('keydown', shortcut('ArrowLeft'));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(page.status?.textContent, '没有更多历史图片');
+
+    page.emit('keydown', shortcut('ArrowRight'));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(page.shown?.url, 'blob:selected/wide2.png');
+
+    page.emit('keydown', shortcut('ArrowRight'));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(page.shown?.url, 'blob:selected/wide3.png');
+  } finally {
+    page.cleanup();
+  }
+});
+
+test('keeps at most twenty historical images', async () => {
+  const page = createPage(() => 0, [
+    { name: 'wide.png', type: 'image/png', webkitRelativePath: 'selected/wide.png' },
+    { name: 'wide2.png', type: 'image/png', webkitRelativePath: 'selected/wide2.png' },
+  ]);
+  await page.install('input');
+  const shortcut = (code: string) => ({
+    code,
+    altKey: true,
+    metaKey: true,
+    ctrlKey: false,
+    shiftKey: false,
+    isComposing: false,
+    repeat: false,
+    preventDefault() {},
+    stopImmediatePropagation() {},
+  });
+  try {
+    for (let index = 0; index < 22; index++) {
+      page.emit('keydown', shortcut('ArrowRight'));
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    for (let index = 0; index < 20; index++) {
+      page.emit('keydown', shortcut('ArrowLeft'));
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    assert.notEqual(page.status?.textContent, '没有更多历史图片');
+
+    page.emit('keydown', shortcut('ArrowLeft'));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(page.status?.textContent, '没有更多历史图片');
   } finally {
     page.cleanup();
   }
