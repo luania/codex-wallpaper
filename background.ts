@@ -52,7 +52,7 @@ export async function installPixivBackground(
   let timer: number | undefined;
   let foregroundVisible = true;
   let blurPx = 0;
-  let overlayOpacity = 0.2;
+  let overlayOpacity = 0.33;
   let overlay: HTMLImageElement | undefined;
   let overlayImage: BackgroundImage | undefined;
   let overlayPath: string | undefined;

@@ -33,17 +33,14 @@ body._pure-mode_ #__my_progress__ {
   pointer-events: none !important;
 }
 
-body._pure-mode_ main[class*="_MainContentLeftBorder_"] {
-  border-left-color: transparent !important;
-}
-
 body main[class*="_MainContentLeftBorder_"] {
-  transform: translateX(0px);
   transition: all 200ms ease;
 }
+
 body._pure-mode_ main[class*="_MainContentLeftBorder_"] {
   border-left-color: transparent !important;
-  transform: translateX(-200px);
+  position: fixed;
+  inset: 0;
 }
 
 body._pure-mode_ [data-composer-overlay-floating-ui="true"],

@@ -135,8 +135,25 @@ export function installPureMode() {
     );
   }
 
+  function isTextInputTarget(event: KeyboardEvent) {
+    let element = event.target instanceof HTMLElement ? event.target : null;
+    while (element) {
+      const tagName = element.tagName.toLowerCase();
+      if (tagName === 'input' || tagName === 'textarea') return true;
+      if (element.getAttribute('role') === 'textbox') return true;
+      const contentEditable = element.getAttribute('contenteditable');
+      if (contentEditable !== null) return contentEditable !== 'false';
+      element = element.parentElement;
+    }
+    return false;
+  }
+
   function onKeyDown(event: KeyboardEvent) {
     if (isStandaloneAltKey(event) && !event.repeat) {
+      if (isTextInputTarget(event)) {
+        onActivity();
+        return;
+      }
       altKeysDown.add(event.code);
       if (pureModeActive) {
         updatePureModeVisibility();

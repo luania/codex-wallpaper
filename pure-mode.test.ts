@@ -112,6 +112,13 @@ function createPage() {
   const conversation = new FakeElement('div');
   conversation.setAttribute('data-thread-find-target', 'conversation');
   const composer = new FakeElement('div');
+  const input = new FakeElement('input');
+  const textarea = new FakeElement('textarea');
+  const contentEditable = new FakeElement('div');
+  contentEditable.setAttribute('contenteditable', 'true');
+  const contentEditableChild = new FakeElement('span');
+  const textbox = new FakeElement('div');
+  textbox.setAttribute('role', 'textbox');
   const toast = new FakeElement('div');
   const status = new FakeElement('div');
   status.id = '__my_status__';
@@ -124,6 +131,11 @@ function createPage() {
   layout.appendChild(main);
   main.appendChild(conversation);
   main.appendChild(composer);
+  composer.appendChild(input);
+  composer.appendChild(textarea);
+  composer.appendChild(contentEditable);
+  contentEditable.appendChild(contentEditableChild);
+  composer.appendChild(textbox);
   html.appendChild(head);
   html.appendChild(body);
   html.appendChild(status);
@@ -197,6 +209,10 @@ function createPage() {
     main,
     conversation,
     composer,
+    input,
+    textarea,
+    contentEditableChild,
+    textbox,
     toast,
     statusMessages,
     emit(type: string, event: unknown = {}) {
@@ -395,6 +411,31 @@ test('holding Alt temporarily exits pure mode and restores it after release', ()
 
   page.emit('keyup', { code: 'AltLeft' });
   assert.equal(page.body.hasClass('_pure-mode_'), true);
+  page.cleanup();
+});
+
+test('holding Alt in a text input does not temporarily exit pure mode', () => {
+  const page = createPage();
+  page.install();
+  page.advance(30_000);
+  const statusCount = page.statusMessages.length;
+  const altEvent = {
+    code: 'AltLeft',
+    altKey: true,
+    metaKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    isComposing: false,
+    repeat: false,
+  };
+
+  for (const target of [page.input, page.textarea, page.contentEditableChild, page.textbox]) {
+    page.emit('keydown', { ...altEvent, target });
+    assert.equal(page.body.hasClass('_pure-mode_'), true);
+    assert.equal(page.statusMessages.length, statusCount);
+    page.emit('keyup', { ...altEvent, target });
+  }
+
   page.cleanup();
 });
 
