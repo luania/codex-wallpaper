@@ -231,6 +231,28 @@ function createPage() {
   };
 }
 
+const f4Event = {
+  code: 'F4',
+  altKey: false,
+  metaKey: false,
+  ctrlKey: false,
+  shiftKey: false,
+  isComposing: false,
+  repeat: false,
+  preventDefault() {},
+  stopImmediatePropagation() {},
+};
+
+function tapF4(page: ReturnType<typeof createPage>) {
+  page.emit('keydown', f4Event);
+  page.emit('keyup', { code: 'F4' });
+}
+
+function doubleTapF4(page: ReturnType<typeof createPage>) {
+  tapF4(page);
+  tapF4(page);
+}
+
 test('enters pure mode with a body class and keeps node attributes untouched', () => {
   const page = createPage();
   assert.equal(page.install(), true);
@@ -255,32 +277,21 @@ test('mouse movement does not wake pure mode and idle timer restarts when awake'
   page.cleanup();
 });
 
-test('the shortcut immediately enters and exits pure mode', () => {
+test('double-tapping F4 immediately enters and exits pure mode', () => {
   const page = createPage();
   page.install();
-  const shortcut = {
-    code: 'KeyP',
-    altKey: true,
-    metaKey: true,
-    ctrlKey: false,
-    shiftKey: false,
-    isComposing: false,
-    repeat: false,
-    preventDefault() {},
-    stopImmediatePropagation() {},
-  };
 
-  page.emit('keydown', shortcut);
+  doubleTapF4(page);
   assert.equal(page.statusMessages.at(-1), '纯享模式已开启');
   assert.equal(page.body.hasClass('_pure-mode_'), true);
 
-  page.emit('keydown', { ...shortcut });
+  doubleTapF4(page);
   assert.equal(page.statusMessages.at(-1), '纯享模式已关闭');
   assert.equal(page.body.hasClass('_pure-mode_'), false);
   page.advance(30_000);
   assert.equal(page.body.hasClass('_pure-mode_'), true);
 
-  page.emit('keydown', { ...shortcut });
+  doubleTapF4(page);
   assert.equal(page.statusMessages.at(-1), '纯享模式已关闭');
   assert.equal(page.body.hasClass('_pure-mode_'), false);
   page.advance(29_999);
@@ -290,25 +301,11 @@ test('the shortcut immediately enters and exits pure mode', () => {
   page.cleanup();
 });
 
-test('mouse clicks do not wake pure mode after the shortcut is released', () => {
+test('mouse clicks do not wake pure mode after double-tapping F4', () => {
   const page = createPage();
   page.install();
-  const shortcut = {
-    code: 'KeyP',
-    altKey: true,
-    metaKey: true,
-    ctrlKey: false,
-    shiftKey: false,
-    isComposing: false,
-    repeat: false,
-    preventDefault() {},
-    stopImmediatePropagation() {},
-  };
 
-  page.emit('keydown', shortcut);
-  page.emit('keyup', { code: 'KeyP' });
-  page.emit('keyup', { code: 'AltRight' });
-  page.emit('keyup', { code: 'MetaLeft' });
+  doubleTapF4(page);
   assert.equal(page.body.hasClass('_pure-mode_'), true);
 
   page.emit('keydown', { code: 'KeyA' });
@@ -324,19 +321,8 @@ test('mouse clicks do not wake pure mode after the shortcut is released', () => 
 test('Escape does not exit pure mode', () => {
   const page = createPage();
   page.install();
-  const shortcut = {
-    code: 'KeyP',
-    altKey: true,
-    metaKey: true,
-    ctrlKey: false,
-    shiftKey: false,
-    isComposing: false,
-    repeat: false,
-    preventDefault() {},
-    stopImmediatePropagation() {},
-  };
 
-  page.emit('keydown', shortcut);
+  doubleTapF4(page);
   assert.equal(page.body.hasClass('_pure-mode_'), true);
   let prevented = false;
   let stopped = false;
@@ -359,34 +345,11 @@ test('Escape does not exit pure mode', () => {
 test('holding F4 temporarily exits pure mode and restores it after release', () => {
   const page = createPage();
   page.install();
-  const shortcut = {
-    code: 'KeyP',
-    altKey: true,
-    metaKey: true,
-    ctrlKey: false,
-    shiftKey: false,
-    isComposing: false,
-    repeat: false,
-    preventDefault() {},
-    stopImmediatePropagation() {},
-  };
-
-  page.emit('keydown', shortcut);
-  page.emit('keyup', { code: 'KeyP' });
-  page.emit('keyup', { code: 'AltRight' });
-  page.emit('keyup', { code: 'MetaLeft' });
+  doubleTapF4(page);
   assert.equal(page.body.hasClass('_pure-mode_'), true);
 
   const statusCount = page.statusMessages.length;
-  page.emit('keydown', {
-    code: 'F4',
-    altKey: false,
-    metaKey: false,
-    ctrlKey: false,
-    shiftKey: false,
-    isComposing: false,
-    repeat: false,
-  });
+  page.emit('keydown', { ...f4Event });
   assert.equal(page.body.hasClass('_pure-mode_'), false);
   assert.equal(page.statusMessages.length, statusCount);
 
@@ -402,17 +365,7 @@ test('repeated F4 keydown does not change temporary pure mode state', () => {
   const page = createPage();
   page.install();
   page.advance(30_000);
-  const f4Event = {
-    code: 'F4',
-    altKey: false,
-    metaKey: false,
-    ctrlKey: false,
-    shiftKey: false,
-    isComposing: false,
-    repeat: false,
-  };
-
-  page.emit('keydown', f4Event);
+  page.emit('keydown', { ...f4Event });
   assert.equal(page.body.hasClass('_pure-mode_'), false);
   page.emit('keydown', { ...f4Event, repeat: true });
   assert.equal(page.body.hasClass('_pure-mode_'), false);
@@ -450,16 +403,7 @@ test('pure mode restores only after F4 is released', () => {
   page.install();
   page.advance(30_000);
 
-  const f4Event = {
-    code: 'F4',
-    altKey: false,
-    metaKey: false,
-    ctrlKey: false,
-    shiftKey: false,
-    isComposing: false,
-    repeat: false,
-  };
-  page.emit('keydown', f4Event);
+  page.emit('keydown', { ...f4Event });
   assert.equal(page.body.hasClass('_pure-mode_'), false);
   page.emit('keydown', { ...f4Event, repeat: true });
   assert.equal(page.body.hasClass('_pure-mode_'), false);
@@ -468,23 +412,41 @@ test('pure mode restores only after F4 is released', () => {
   page.cleanup();
 });
 
-test('the P shortcut permanently closes pure mode during an F4 hold', () => {
+test('double-tapping F4 permanently closes pure mode', () => {
   const page = createPage();
   page.install();
   page.advance(30_000);
 
-  page.emit('keydown', {
-    code: 'F4',
-    altKey: false,
-    metaKey: false,
-    ctrlKey: false,
-    shiftKey: false,
-    isComposing: false,
-    repeat: false,
-  });
+  doubleTapF4(page);
   assert.equal(page.body.hasClass('_pure-mode_'), false);
+  assert.equal(page.statusMessages.at(-1), '纯享模式已关闭');
 
-  const shortcut = {
+  page.advance(29_999);
+  assert.equal(page.body.hasClass('_pure-mode_'), false);
+  page.advance(1);
+  assert.equal(page.body.hasClass('_pure-mode_'), true);
+  page.cleanup();
+});
+
+test('a single F4 press does not toggle pure mode after the double-tap window', () => {
+  const page = createPage();
+  page.install();
+
+  page.emit('keydown', { ...f4Event });
+  page.emit('keyup', { code: 'F4' });
+  page.advance(300);
+  assert.equal(page.body.hasClass('_pure-mode_'), false);
+  assert.equal(page.statusMessages.length, 0);
+
+  page.advance(29_700);
+  assert.equal(page.body.hasClass('_pure-mode_'), true);
+  page.cleanup();
+});
+
+test('Alt+P no longer toggles pure mode', () => {
+  const page = createPage();
+  page.install();
+  const event = {
     code: 'KeyP',
     altKey: true,
     metaKey: true,
@@ -495,17 +457,10 @@ test('the P shortcut permanently closes pure mode during an F4 hold', () => {
     preventDefault() {},
     stopImmediatePropagation() {},
   };
-  page.emit('keydown', shortcut);
-  assert.equal(page.body.hasClass('_pure-mode_'), false);
-  assert.equal(page.statusMessages.at(-1), '纯享模式已关闭');
 
-  page.emit('keyup', { code: 'KeyP' });
-  page.emit('keyup', { code: 'F4' });
-  page.emit('keyup', { code: 'MetaLeft' });
-  page.advance(29_999);
+  page.emit('keydown', event);
   assert.equal(page.body.hasClass('_pure-mode_'), false);
-  page.advance(1);
-  assert.equal(page.body.hasClass('_pure-mode_'), true);
+  assert.equal(page.statusMessages.length, 0);
   page.cleanup();
 });
 

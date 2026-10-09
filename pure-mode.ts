@@ -14,8 +14,8 @@ export function installPureMode() {
   let pureModeActive = false;
   let f4KeysDown = new Set<string>();
   let idleTimer: number | undefined;
+  let f4TapTimer: number | undefined;
   let reconcileTimer: number | undefined;
-  let shortcutKeyUps = new Set<string>();
   let observer: MutationObserver | undefined;
 
   const eventOptions = { capture: true } as const;
@@ -39,6 +39,11 @@ export function installPureMode() {
   function clearReconcileTimer() {
     window.clearTimeout(reconcileTimer);
     reconcileTimer = undefined;
+  }
+
+  function clearF4TapTimer() {
+    window.clearTimeout(f4TapTimer);
+    f4TapTimer = undefined;
   }
 
   function findConversation() {
@@ -110,21 +115,6 @@ export function installPureMode() {
     restartIdleTimer();
   }
 
-  function isToggleShortcut(event: KeyboardEvent) {
-    return (
-      event.code === 'KeyP' &&
-      event.altKey &&
-      !event.shiftKey &&
-      event.metaKey !== event.ctrlKey &&
-      !event.isComposing &&
-      !event.repeat
-    );
-  }
-
-  function isAltKey(event: KeyboardEvent) {
-    return event.code === 'AltLeft' || event.code === 'AltRight';
-  }
-
   function isStandaloneF4Key(event: KeyboardEvent) {
     return (
       event.code === 'F4' &&
@@ -136,61 +126,41 @@ export function installPureMode() {
     );
   }
 
-  function onKeyDown(event: KeyboardEvent) {
-    if (isStandaloneF4Key(event) && !event.repeat) {
-      f4KeysDown.add(event.code);
-      if (pureModeActive) {
-        updatePureModeVisibility();
-      } else {
-        onActivity();
-      }
-      return;
+  function togglePureMode(event: KeyboardEvent) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (pureModeActive) {
+      leavePureMode();
+      restartIdleTimer();
+    } else {
+      clearIdleTimer();
+      enterPureMode();
     }
-    if (isToggleShortcut(event)) {
-      f4KeysDown.clear();
-      shortcutKeyUps = new Set(['KeyP']);
-      if (event.altKey) {
-        shortcutKeyUps.add('AltLeft');
-        shortcutKeyUps.add('AltRight');
-      }
-      if (event.metaKey) {
-        shortcutKeyUps.add('MetaLeft');
-        shortcutKeyUps.add('MetaRight');
-      }
-      if (event.ctrlKey) {
-        shortcutKeyUps.add('ControlLeft');
-        shortcutKeyUps.add('ControlRight');
-      }
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      if (pureModeActive) {
-        leavePureMode();
-        restartIdleTimer();
+    state.__pixivShowStatus__?.(`纯享模式${pureModeActive ? '已开启' : '已关闭'}`);
+  }
+
+  function onKeyDown(event: KeyboardEvent) {
+    if (isStandaloneF4Key(event) && !event.repeat && !f4KeysDown.has(event.code)) {
+      f4KeysDown.add(event.code);
+      if (f4TapTimer !== undefined) {
+        clearF4TapTimer();
+        togglePureMode(event);
       } else {
-        clearIdleTimer();
-        enterPureMode();
+        f4TapTimer = window.setTimeout(() => {
+          f4TapTimer = undefined;
+        }, 300);
+        if (pureModeActive) {
+          updatePureModeVisibility();
+        } else {
+          onActivity();
+        }
       }
-      state.__pixivShowStatus__?.(`纯享模式${pureModeActive ? '已开启' : '已关闭'}`);
       return;
     }
     onActivity();
   }
 
   function onKeyUp(event: KeyboardEvent) {
-    if (shortcutKeyUps.has(event.code)) {
-      shortcutKeyUps.delete(event.code);
-      if (event.code === 'AltLeft' || event.code === 'AltRight') {
-        shortcutKeyUps.delete('AltLeft');
-        shortcutKeyUps.delete('AltRight');
-      } else if (event.code === 'MetaLeft' || event.code === 'MetaRight') {
-        shortcutKeyUps.delete('MetaLeft');
-        shortcutKeyUps.delete('MetaRight');
-      } else if (event.code === 'ControlLeft' || event.code === 'ControlRight') {
-        shortcutKeyUps.delete('ControlLeft');
-        shortcutKeyUps.delete('ControlRight');
-      }
-      return;
-    }
     if (event.code === 'F4') {
       const wasTracked = f4KeysDown.delete(event.code);
       if (pureModeActive && wasTracked && f4KeysDown.size === 0) {
@@ -206,10 +176,10 @@ export function installPureMode() {
   function cleanup() {
     stopped = true;
     clearIdleTimer();
+    clearF4TapTimer();
     clearReconcileTimer();
     observer?.disconnect();
     observer = undefined;
-    shortcutKeyUps.clear();
     f4KeysDown.clear();
     const activityHandler = onActivity as EventListener;
     const keyDownHandler = onKeyDown as EventListener;
