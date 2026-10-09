@@ -112,13 +112,6 @@ function createPage() {
   const conversation = new FakeElement('div');
   conversation.setAttribute('data-thread-find-target', 'conversation');
   const composer = new FakeElement('div');
-  const input = new FakeElement('input');
-  const textarea = new FakeElement('textarea');
-  const contentEditable = new FakeElement('div');
-  contentEditable.setAttribute('contenteditable', 'true');
-  const contentEditableChild = new FakeElement('span');
-  const textbox = new FakeElement('div');
-  textbox.setAttribute('role', 'textbox');
   const toast = new FakeElement('div');
   const status = new FakeElement('div');
   status.id = '__my_status__';
@@ -131,11 +124,6 @@ function createPage() {
   layout.appendChild(main);
   main.appendChild(conversation);
   main.appendChild(composer);
-  composer.appendChild(input);
-  composer.appendChild(textarea);
-  composer.appendChild(contentEditable);
-  contentEditable.appendChild(contentEditableChild);
-  composer.appendChild(textbox);
   html.appendChild(head);
   html.appendChild(body);
   html.appendChild(status);
@@ -209,10 +197,6 @@ function createPage() {
     main,
     conversation,
     composer,
-    input,
-    textarea,
-    contentEditableChild,
-    textbox,
     toast,
     statusMessages,
     emit(type: string, event: unknown = {}) {
@@ -372,7 +356,7 @@ test('Escape does not exit pure mode', () => {
   page.cleanup();
 });
 
-test('holding Alt temporarily exits pure mode and restores it after release', () => {
+test('holding F4 temporarily exits pure mode and restores it after release', () => {
   const page = createPage();
   page.install();
   const shortcut = {
@@ -395,8 +379,8 @@ test('holding Alt temporarily exits pure mode and restores it after release', ()
 
   const statusCount = page.statusMessages.length;
   page.emit('keydown', {
-    code: 'AltLeft',
-    altKey: true,
+    code: 'F4',
+    altKey: false,
     metaKey: false,
     ctrlKey: false,
     shiftKey: false,
@@ -409,19 +393,18 @@ test('holding Alt temporarily exits pure mode and restores it after release', ()
   page.advance(30_000);
   assert.equal(page.body.hasClass('_pure-mode_'), false);
 
-  page.emit('keyup', { code: 'AltLeft' });
+  page.emit('keyup', { code: 'F4' });
   assert.equal(page.body.hasClass('_pure-mode_'), true);
   page.cleanup();
 });
 
-test('holding Alt in a text input does not temporarily exit pure mode', () => {
+test('repeated F4 keydown does not change temporary pure mode state', () => {
   const page = createPage();
   page.install();
   page.advance(30_000);
-  const statusCount = page.statusMessages.length;
-  const altEvent = {
-    code: 'AltLeft',
-    altKey: true,
+  const f4Event = {
+    code: 'F4',
+    altKey: false,
     metaKey: false,
     ctrlKey: false,
     shiftKey: false,
@@ -429,47 +412,25 @@ test('holding Alt in a text input does not temporarily exit pure mode', () => {
     repeat: false,
   };
 
-  for (const target of [page.input, page.textarea, page.contentEditableChild, page.textbox]) {
-    page.emit('keydown', { ...altEvent, target });
-    assert.equal(page.body.hasClass('_pure-mode_'), true);
-    assert.equal(page.statusMessages.length, statusCount);
-    page.emit('keyup', { ...altEvent, target });
-  }
-
-  page.cleanup();
-});
-
-test('pure mode restores only after both Alt keys are released', () => {
-  const page = createPage();
-  page.install();
-  page.advance(30_000);
-
-  const altEvent = {
-    altKey: true,
-    metaKey: false,
-    ctrlKey: false,
-    shiftKey: false,
-    isComposing: false,
-    repeat: false,
-  };
-  page.emit('keydown', { ...altEvent, code: 'AltLeft' });
-  page.emit('keydown', { ...altEvent, code: 'AltRight' });
-  page.emit('keyup', { code: 'AltLeft' });
+  page.emit('keydown', f4Event);
   assert.equal(page.body.hasClass('_pure-mode_'), false);
-  page.emit('keyup', { code: 'AltRight' });
+  page.emit('keydown', { ...f4Event, repeat: true });
+  assert.equal(page.body.hasClass('_pure-mode_'), false);
+  page.emit('keyup', { code: 'F4' });
   assert.equal(page.body.hasClass('_pure-mode_'), true);
+
   page.cleanup();
 });
 
-test('Alt used with another modifier does not temporarily exit pure mode', () => {
+test('modified F4 does not temporarily exit pure mode', () => {
   const page = createPage();
   page.install();
   page.advance(30_000);
 
-  for (const modifier of ['metaKey', 'ctrlKey', 'shiftKey'] as const) {
+  for (const modifier of ['altKey', 'metaKey', 'ctrlKey', 'shiftKey'] as const) {
     page.emit('keydown', {
-      code: 'AltLeft',
-      altKey: true,
+      code: 'F4',
+      altKey: false,
       metaKey: false,
       ctrlKey: false,
       shiftKey: false,
@@ -478,20 +439,43 @@ test('Alt used with another modifier does not temporarily exit pure mode', () =>
       [modifier]: true,
     });
     assert.equal(page.body.hasClass('_pure-mode_'), true);
-    page.emit('keyup', { code: 'AltLeft' });
+    page.emit('keyup', { code: 'F4' });
   }
 
   page.cleanup();
 });
 
-test('the P shortcut permanently closes pure mode during an Alt hold', () => {
+test('pure mode restores only after F4 is released', () => {
+  const page = createPage();
+  page.install();
+  page.advance(30_000);
+
+  const f4Event = {
+    code: 'F4',
+    altKey: false,
+    metaKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    isComposing: false,
+    repeat: false,
+  };
+  page.emit('keydown', f4Event);
+  assert.equal(page.body.hasClass('_pure-mode_'), false);
+  page.emit('keydown', { ...f4Event, repeat: true });
+  assert.equal(page.body.hasClass('_pure-mode_'), false);
+  page.emit('keyup', { code: 'F4' });
+  assert.equal(page.body.hasClass('_pure-mode_'), true);
+  page.cleanup();
+});
+
+test('the P shortcut permanently closes pure mode during an F4 hold', () => {
   const page = createPage();
   page.install();
   page.advance(30_000);
 
   page.emit('keydown', {
-    code: 'AltLeft',
-    altKey: true,
+    code: 'F4',
+    altKey: false,
     metaKey: false,
     ctrlKey: false,
     shiftKey: false,
@@ -516,7 +500,7 @@ test('the P shortcut permanently closes pure mode during an Alt hold', () => {
   assert.equal(page.statusMessages.at(-1), '纯享模式已关闭');
 
   page.emit('keyup', { code: 'KeyP' });
-  page.emit('keyup', { code: 'AltLeft' });
+  page.emit('keyup', { code: 'F4' });
   page.emit('keyup', { code: 'MetaLeft' });
   page.advance(29_999);
   assert.equal(page.body.hasClass('_pure-mode_'), false);

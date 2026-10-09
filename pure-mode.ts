@@ -12,7 +12,7 @@ export function installPureMode() {
 
   let stopped = false;
   let pureModeActive = false;
-  let altKeysDown = new Set<string>();
+  let f4KeysDown = new Set<string>();
   let idleTimer: number | undefined;
   let reconcileTimer: number | undefined;
   let shortcutKeyUps = new Set<string>();
@@ -46,7 +46,7 @@ export function installPureMode() {
   }
 
   function isPureModeVisible() {
-    return pureModeActive && altKeysDown.size === 0;
+    return pureModeActive && f4KeysDown.size === 0;
   }
 
   function reconcileMode() {
@@ -125,9 +125,10 @@ export function installPureMode() {
     return event.code === 'AltLeft' || event.code === 'AltRight';
   }
 
-  function isStandaloneAltKey(event: KeyboardEvent) {
+  function isStandaloneF4Key(event: KeyboardEvent) {
     return (
-      isAltKey(event) &&
+      event.code === 'F4' &&
+      !event.altKey &&
       !event.metaKey &&
       !event.ctrlKey &&
       !event.shiftKey &&
@@ -135,26 +136,9 @@ export function installPureMode() {
     );
   }
 
-  function isTextInputTarget(event: KeyboardEvent) {
-    let element = event.target instanceof HTMLElement ? event.target : null;
-    while (element) {
-      const tagName = element.tagName.toLowerCase();
-      if (tagName === 'input' || tagName === 'textarea') return true;
-      if (element.getAttribute('role') === 'textbox') return true;
-      const contentEditable = element.getAttribute('contenteditable');
-      if (contentEditable !== null) return contentEditable !== 'false';
-      element = element.parentElement;
-    }
-    return false;
-  }
-
   function onKeyDown(event: KeyboardEvent) {
-    if (isStandaloneAltKey(event) && !event.repeat) {
-      if (isTextInputTarget(event)) {
-        onActivity();
-        return;
-      }
-      altKeysDown.add(event.code);
+    if (isStandaloneF4Key(event) && !event.repeat) {
+      f4KeysDown.add(event.code);
       if (pureModeActive) {
         updatePureModeVisibility();
       } else {
@@ -163,7 +147,7 @@ export function installPureMode() {
       return;
     }
     if (isToggleShortcut(event)) {
-      altKeysDown.clear();
+      f4KeysDown.clear();
       shortcutKeyUps = new Set(['KeyP']);
       if (event.altKey) {
         shortcutKeyUps.add('AltLeft');
@@ -207,9 +191,9 @@ export function installPureMode() {
       }
       return;
     }
-    if (isAltKey(event)) {
-      const wasTracked = altKeysDown.delete(event.code);
-      if (pureModeActive && wasTracked && altKeysDown.size === 0) {
+    if (event.code === 'F4') {
+      const wasTracked = f4KeysDown.delete(event.code);
+      if (pureModeActive && wasTracked && f4KeysDown.size === 0) {
         updatePureModeVisibility();
       } else if (!pureModeActive) {
         onActivity();
@@ -226,7 +210,7 @@ export function installPureMode() {
     observer?.disconnect();
     observer = undefined;
     shortcutKeyUps.clear();
-    altKeysDown.clear();
+    f4KeysDown.clear();
     const activityHandler = onActivity as EventListener;
     const keyDownHandler = onKeyDown as EventListener;
     const keyUpHandler = onKeyUp as EventListener;
