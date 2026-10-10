@@ -6,6 +6,8 @@ import { chromium } from 'playwright';
 import { loadLocalImages } from './local-images.ts';
 import { installPixivBackground } from './background.ts';
 import { installPureMode } from './pure-mode.ts';
+import { DEFAULT_INJECT_SETTINGS, INJECT_SETTINGS_STORAGE_KEY } from './settings.ts';
+import { installSettingsPanel } from './settings-panel.ts';
 
 const { values, positionals } = parseArgs({
   options: { help: { type: 'boolean', short: 'h' } },
@@ -71,6 +73,18 @@ try {
     frameId: frameTree.frame.id,
     worldName: '__pixiv_background__',
   });
+  const settingsResult = await session.send('Runtime.callFunctionOn', {
+    executionContextId,
+    functionDeclaration: installSettingsPanel.toString(),
+    arguments: [{ value: DEFAULT_INJECT_SETTINGS }, { value: INJECT_SETTINGS_STORAGE_KEY }],
+    awaitPromise: true,
+    returnByValue: true,
+  });
+  if (settingsResult.exceptionDetails) {
+    throw new Error(
+      settingsResult.exceptionDetails.exception?.description ?? settingsResult.exceptionDetails.text,
+    );
+  }
   const pureModeResult = await session.send('Runtime.callFunctionOn', {
     executionContextId,
     functionDeclaration: installPureMode.toString(),
@@ -93,7 +107,7 @@ try {
     throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
   }
   const count = result.result?.value;
-  console.log(`从 ${directory} 选择了 ${typeof count === 'number' ? count : '若干'} 张图片，按窗口横竖方向筛选并每 1 分钟轮替；⌘/Ctrl + Alt + → 历史中前进，到最新记录后随机切换，⌘/Ctrl + Alt + ← 回看历史图片，↑/↓ 调整模糊，滚轮调整不透明度，F5 按住查看原图，⌘/Ctrl + Alt + C 复制相对路径，Space 显示/隐藏；⌘/Ctrl + Alt + P 开关纯享模式；程序退出后继续运行。`);
+  console.log(`从 ${directory} 选择了 ${typeof count === 'number' ? count : '若干'} 张图片；默认每 5 分钟轮替。按 ⌘/Ctrl + Alt + , 打开设置，可调整轮替、显示效果、纯享模式和全部快捷键。程序退出后继续运行。`);
 } finally {
   // For a CDP-connected browser this only disconnects; page timers keep running.
   await browser.close();

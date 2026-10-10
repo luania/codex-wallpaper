@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
 import test from 'node:test';
 import { installPureMode } from './pure-mode.ts';
+import { DEFAULT_INJECT_SETTINGS } from './settings.ts';
 
 type Listener = (...args: any[]) => void;
 
@@ -93,12 +94,14 @@ class FakeMutationObserver {
   }
 }
 
-function createPage() {
+function createPage(initialSettings?: typeof DEFAULT_INJECT_SETTINGS) {
   const listeners = new Map<string, Set<Listener>>();
   const timers = new Map<number, { callback: () => void; due: number }>();
   const statusMessages: string[] = [];
   let nextTimerId = 1;
   let now = 0;
+  let currentSettings = initialSettings;
+  const settingsSubscribers = new Set<(settings: typeof DEFAULT_INJECT_SETTINGS) => void>();
 
   const html = new FakeElement('html');
   const head = new FakeElement('head');
@@ -180,6 +183,18 @@ function createPage() {
     removeEventListener(type: string, listener: Listener) {
       listeners.get(type)?.delete(listener);
     },
+    ...(initialSettings ? {
+      __pixivInjectSettings__: initialSettings,
+      __pixivSubscribeSettings__(subscriber: (settings: typeof DEFAULT_INJECT_SETTINGS) => void) {
+        settingsSubscribers.add(subscriber);
+        subscriber(currentSettings!);
+        return () => settingsSubscribers.delete(subscriber);
+      },
+      __pixivSetSettings__(settings: typeof DEFAULT_INJECT_SETTINGS) {
+        currentSettings = settings;
+        for (const subscriber of settingsSubscribers) subscriber(settings);
+      },
+    } : {}),
   };
 
   const installRaw = runInNewContext(`(${installPureMode.toString()})`, {
@@ -225,6 +240,13 @@ function createPage() {
       FakeMutationObserver.current?.trigger();
       return replacement;
     },
+    setSettings(settings: typeof DEFAULT_INJECT_SETTINGS) {
+      const setSettings = (window as typeof window & {
+        __pixivSetSettings__?: (next: typeof DEFAULT_INJECT_SETTINGS) => void;
+      }).__pixivSetSettings__;
+      assert.ok(setSettings);
+      setSettings(settings);
+    },
     cleanup() {
       (window as typeof window & { __codexPureModeCleanup__?: () => void }).__codexPureModeCleanup__?.();
     },
@@ -259,6 +281,54 @@ test('enters pure mode with a body class and keeps node attributes untouched', (
   page.advance(30_000);
   assert.equal(page.body.hasClass('_pure-mode_'), true);
   assert.equal(page.main.hasAttribute('data-codex-pure-mode-hidden'), false);
+  page.cleanup();
+});
+
+test('honors dynamic auto-enter and idle duration settings', () => {
+  const settings = structuredClone(DEFAULT_INJECT_SETTINGS);
+  settings.pureMode.autoEnter = false;
+  settings.pureMode.idleMs = 5_000;
+  const page = createPage(settings);
+  page.install();
+  page.advance(10_000);
+  assert.equal(page.body.hasClass('_pure-mode_'), false);
+
+  const updated = structuredClone(settings);
+  updated.pureMode.autoEnter = true;
+  page.setSettings(updated);
+  page.advance(4_999);
+  assert.equal(page.body.hasClass('_pure-mode_'), false);
+  page.advance(1);
+  assert.equal(page.body.hasClass('_pure-mode_'), true);
+  page.cleanup();
+});
+
+test('uses the configured pure-mode shortcut for double-tap and hold behavior', () => {
+  const settings = structuredClone(DEFAULT_INJECT_SETTINGS);
+  settings.pureMode.autoEnter = false;
+  settings.shortcuts.togglePureMode = { code: 'KeyM', primary: true, alt: false, shift: true };
+  const page = createPage(settings);
+  page.install();
+  const press = () => {
+    page.emit('keydown', {
+      code: 'KeyM', altKey: false, metaKey: false, ctrlKey: true, shiftKey: true,
+      isComposing: false, repeat: false, preventDefault() {}, stopImmediatePropagation() {},
+    });
+    page.emit('keyup', { code: 'KeyM', preventDefault() {}, stopImmediatePropagation() {} });
+  };
+
+  press();
+  press();
+  assert.equal(page.body.hasClass('_pure-mode_'), true);
+  assert.equal(page.statusMessages.at(-1), '纯享模式已开启');
+
+  page.emit('keydown', {
+    code: 'KeyM', altKey: false, metaKey: false, ctrlKey: true, shiftKey: true,
+    isComposing: false, repeat: false, preventDefault() {}, stopImmediatePropagation() {},
+  });
+  assert.equal(page.body.hasClass('_pure-mode_'), false);
+  page.emit('keyup', { code: 'KeyM', preventDefault() {}, stopImmediatePropagation() {} });
+  assert.equal(page.body.hasClass('_pure-mode_'), true);
   page.cleanup();
 });
 

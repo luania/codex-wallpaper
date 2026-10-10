@@ -13,6 +13,10 @@ div[data-floating-navigation-rail-list="true"] {
   display: none;
 }
 
+body._pure-mode_ div[data-floating-navigation-rail-list="true"] {
+  display: none;
+}
+
 body [data-app-shell-frame] > :not([data-app-shell-workspace-row]):not(:has([data-composer-overlay-floating-ui="true"])),
 body [class*="_PageSurface_"]:not([class*="_PageSurfaceLayout_"]),
 body .app-shell-left-panel,
@@ -51,4 +55,137 @@ body._pure-mode_ [class*="_ComposerTopMenuShell"] {
 
 div[aria-label="Conversation"] {
   box-shadow: none!important;
+}
+
+#__pixiv_settings_panel__ {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 2147483647;
+  display: none;
+  width: min(420px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 8px;
+  background: rgba(27, 29, 31, 0.97);
+  color: #f5f5f5;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color-scheme: dark;
+  pointer-events: auto;
+}
+
+#__pixiv_settings_panel__ * {
+  box-sizing: border-box;
+}
+
+#__pixiv_settings_panel__ .pixiv-settings-header,
+#__pixiv_settings_panel__ .pixiv-settings-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+#__pixiv_settings_panel__ .pixiv-settings-header h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+#__pixiv_settings_panel__ section {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+#__pixiv_settings_panel__ section h3 {
+  margin: 0 0 2px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.16);
+  color: #bde4d0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+#__pixiv_settings_panel__ .pixiv-settings-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(112px, 46%);
+  align-items: center;
+  gap: 12px;
+  min-height: 32px;
+}
+
+#__pixiv_settings_panel__ .pixiv-settings-row input[type="number"] {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 4px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 5px;
+  background: #202326;
+  color: #fff;
+  font: inherit;
+}
+
+#__pixiv_settings_panel__ .pixiv-settings-toggle {
+  justify-self: end;
+  min-width: 78px;
+  padding-inline: 10px;
+  color: #d7ddda;
+}
+
+#__pixiv_settings_panel__ .pixiv-settings-toggle[aria-pressed="true"] {
+  border-color: #71c69b;
+  background: #255d46;
+  color: #effff5;
+}
+
+#__pixiv_settings_panel__ .pixiv-settings-toggle[aria-pressed="false"] {
+  background: #303538;
+  color: #c4cbc7;
+}
+
+#__pixiv_settings_panel__ button {
+  min-height: 30px;
+  padding: 4px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 5px;
+  background: #303538;
+  color: #f5f5f5;
+  font: inherit;
+  cursor: pointer;
+}
+
+#__pixiv_settings_panel__ button:hover {
+  background: #3b4442;
+}
+
+#__pixiv_settings_panel__ .pixiv-settings-shortcut {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#__pixiv_settings_panel__ .pixiv-settings-footer {
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+#__pixiv_settings_panel__ .pixiv-settings-message {
+  flex: 1;
+  min-width: 0;
+  color: #a6dfbd;
+  opacity: 0;
+}
+
+#__pixiv_settings_panel__ .pixiv-settings-message[data-error="true"] {
+  color: #ffb2a8;
+}
+
+body._pure-mode_ #__pixiv_settings_panel__ {
+  display: block;
 }

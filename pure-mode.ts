@@ -1,9 +1,13 @@
 // Serialized into an isolated page world; keep this function self-contained.
 export function installPureMode() {
-  const idleDurationMs = 30_000;
+  type Shortcut = { code: string; primary: boolean; alt: boolean; shift: boolean };
+  type Settings = { pureMode: { autoEnter: boolean; idleMs: number }; shortcuts: Record<string, Shortcut> };
   const state = window as typeof window & {
     __codexPureModeCleanup__?: () => void;
     __pixivShowStatus__?: (message: string) => void;
+    __pixivInjectSettings__?: Settings;
+    __pixivSubscribeSettings__?: (subscriber: (settings: Settings) => void) => () => void;
+    __pixivSettingsPanelOpen__?: () => boolean;
   };
 
   state.__codexPureModeCleanup__?.();
@@ -12,7 +16,13 @@ export function installPureMode() {
 
   let stopped = false;
   let pureModeActive = false;
-  let f4KeysDown = new Set<string>();
+  let toggleKeysDown = new Set<string>();
+  let idleDurationMs = state.__pixivInjectSettings__?.pureMode.idleMs ?? 30_000;
+  let autoEnter = state.__pixivInjectSettings__?.pureMode.autoEnter ?? true;
+  let toggleShortcut = state.__pixivInjectSettings__?.shortcuts.togglePureMode ?? {
+    code: 'F4', primary: false, alt: false, shift: false,
+  };
+  let unsubscribeSettings: (() => void) | undefined;
   let idleTimer: number | undefined;
   let f4TapTimer: number | undefined;
   let reconcileTimer: number | undefined;
@@ -51,7 +61,7 @@ export function installPureMode() {
   }
 
   function isPureModeVisible() {
-    return pureModeActive && f4KeysDown.size === 0;
+    return pureModeActive && toggleKeysDown.size === 0;
   }
 
   function reconcileMode() {
@@ -98,7 +108,7 @@ export function installPureMode() {
 
   function restartIdleTimer() {
     clearIdleTimer();
-    if (stopped || pureModeActive) return;
+    if (stopped || pureModeActive || !autoEnter) return;
     idleTimer = window.setTimeout(() => {
       idleTimer = undefined;
       if (pureModeActive) return;
@@ -115,13 +125,14 @@ export function installPureMode() {
     restartIdleTimer();
   }
 
-  function isStandaloneF4Key(event: KeyboardEvent) {
+  function matchesToggleShortcut(event: KeyboardEvent) {
     return (
-      event.code === 'F4' &&
-      !event.altKey &&
-      !event.metaKey &&
-      !event.ctrlKey &&
-      !event.shiftKey &&
+      event.code === toggleShortcut.code &&
+      event.altKey === toggleShortcut.alt &&
+      event.shiftKey === toggleShortcut.shift &&
+      (toggleShortcut.primary
+        ? event.metaKey !== event.ctrlKey
+        : !event.metaKey && !event.ctrlKey) &&
       !event.isComposing
     );
   }
@@ -138,12 +149,13 @@ export function installPureMode() {
   }
 
   function onKeyDown(event: KeyboardEvent) {
-    if (isStandaloneF4Key(event)) {
+    if (state.__pixivSettingsPanelOpen__?.()) return;
+    if (matchesToggleShortcut(event)) {
       event.preventDefault();
       event.stopImmediatePropagation();
-      if (event.repeat || f4KeysDown.has(event.code)) return;
+      if (event.repeat || toggleKeysDown.has(event.code)) return;
 
-      f4KeysDown.add(event.code);
+      toggleKeysDown.add(event.code);
       if (f4TapTimer !== undefined) {
         clearF4TapTimer();
         togglePureMode();
@@ -163,30 +175,33 @@ export function installPureMode() {
   }
 
   function onKeyUp(event: KeyboardEvent) {
-    if (event.code === 'F4') {
-      const wasTracked = f4KeysDown.delete(event.code);
+    if (toggleKeysDown.has(event.code)) {
+      const wasTracked = toggleKeysDown.delete(event.code);
       if (wasTracked) {
         event.preventDefault?.();
         event.stopImmediatePropagation?.();
       }
-      if (pureModeActive && wasTracked && f4KeysDown.size === 0) {
+      if (pureModeActive && wasTracked && toggleKeysDown.size === 0) {
         updatePureModeVisibility();
       } else if (!pureModeActive) {
         onActivity();
       }
       return;
     }
+    if (state.__pixivSettingsPanelOpen__?.()) return;
     onActivity();
   }
 
   function cleanup() {
     stopped = true;
+    unsubscribeSettings?.();
+    unsubscribeSettings = undefined;
     clearIdleTimer();
     clearF4TapTimer();
     clearReconcileTimer();
     observer?.disconnect();
     observer = undefined;
-    f4KeysDown.clear();
+    toggleKeysDown.clear();
     const activityHandler = onActivity as EventListener;
     const keyDownHandler = onKeyDown as EventListener;
     const keyUpHandler = onKeyUp as EventListener;
@@ -211,6 +226,18 @@ export function installPureMode() {
       eventName === 'keyup' ? keyUpHandler : activityHandler;
     window.addEventListener(eventName, handler, eventOptions);
   }
+
+  unsubscribeSettings = state.__pixivSubscribeSettings__?.((settings) => {
+    const idleChanged = idleDurationMs !== settings.pureMode.idleMs;
+    const autoChanged = autoEnter !== settings.pureMode.autoEnter;
+    idleDurationMs = settings.pureMode.idleMs;
+    autoEnter = settings.pureMode.autoEnter;
+    toggleShortcut = settings.shortcuts.togglePureMode ?? toggleShortcut;
+    if (idleChanged || autoChanged) {
+      if (autoEnter) restartIdleTimer();
+      else clearIdleTimer();
+    }
+  });
 
   if (typeof MutationObserver !== 'undefined' && root) {
     observer = new MutationObserver(scheduleReconcile);

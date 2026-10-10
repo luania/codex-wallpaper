@@ -3,11 +3,16 @@ export async function installPixivBackground(
   inputId: string,
   metadata: Array<{ path: string; orientation?: 'landscape' | 'portrait' }>,
 ) {
-  const intervalMs = 5 * 60_000;
   const loadTimeoutMs = 15_000;
-  const fadeDurationMs = 1000;
   const statusDurationMs = 1_500;
   const maxHistoryEntries = 1 + 20;
+  type Shortcut = { code: string; primary: boolean; alt: boolean; shift: boolean };
+  type Settings = {
+    rotation: { enabled: boolean; intervalMs: number; fadeDurationMs: number };
+    appearance: { blurPx: number; opacity: number; visible: boolean };
+    pureMode: { autoEnter: boolean; idleMs: number };
+    shortcuts: Record<string, Shortcut>;
+  };
   type Orientation = 'landscape' | 'portrait';
   type BackgroundImage = {
     file: File;
@@ -19,7 +24,36 @@ export async function installPixivBackground(
   const state = window as typeof window & {
     __pixivBackgroundCleanup__?: () => void;
     __pixivShowStatus__?: (message: string) => void;
+    __pixivInjectSettings__?: Settings;
+    __pixivSubscribeSettings__?: (subscriber: (settings: Settings) => void) => () => void;
+    __pixivSetSettings__?: (settings: Settings) => void;
+    __pixivSettingsPanelOpen__?: () => boolean;
   };
+  const fallbackSettings: Settings = {
+    rotation: { enabled: true, intervalMs: 5 * 60_000, fadeDurationMs: 1_000 },
+    appearance: { blurPx: 0, opacity: 0.33, visible: true },
+    pureMode: { autoEnter: true, idleMs: 30_000 },
+    shortcuts: {
+      openSettings: { code: 'Comma', primary: true, alt: true, shift: false },
+      next: { code: 'ArrowRight', primary: true, alt: true, shift: false },
+      previous: { code: 'ArrowLeft', primary: true, alt: true, shift: false },
+      toggleVisible: { code: 'Space', primary: true, alt: true, shift: false },
+      blurUp: { code: 'ArrowUp', primary: true, alt: true, shift: false },
+      blurDown: { code: 'ArrowDown', primary: true, alt: true, shift: false },
+      opacityUp: { code: 'PageUp', primary: true, alt: true, shift: false },
+      opacityDown: { code: 'PageDown', primary: true, alt: true, shift: false },
+      copyPath: { code: 'KeyC', primary: true, alt: true, shift: false },
+      previewOriginal: { code: 'F5', primary: false, alt: false, shift: false },
+      togglePureMode: { code: 'F4', primary: false, alt: false, shift: false },
+    },
+  };
+  let runtimeSettings = state.__pixivInjectSettings__ ?? fallbackSettings;
+  const getSettings = () => state.__pixivInjectSettings__ ?? runtimeSettings;
+  const matchesShortcut = (event: KeyboardEvent, shortcut: Shortcut) =>
+    event.code === shortcut.code && event.altKey === shortcut.alt &&
+    event.shiftKey === shortcut.shift && (shortcut.primary
+      ? event.metaKey !== event.ctrlKey
+      : !event.metaKey && !event.ctrlKey);
   state.__pixivBackgroundCleanup__?.();
   document.getElementById('__my_overlay__')?.remove();
 
@@ -50,10 +84,14 @@ export async function installPixivBackground(
 
   let stopped = false;
   let timer: number | undefined;
-  let foregroundVisible = true;
-  let blurPx = 0;
-  let overlayOpacity = 0.33;
+  let foregroundVisible = getSettings().appearance.visible;
+  let blurPx = getSettings().appearance.blurPx;
+  let overlayOpacity = getSettings().appearance.opacity;
+  let rotationEnabled = getSettings().rotation.enabled;
+  let rotationIntervalMs = getSettings().rotation.intervalMs;
+  let fadeDurationMs = getSettings().rotation.fadeDurationMs;
   let originalImageActive = false;
+  let originalImageCode: string | undefined;
   let overlay: HTMLImageElement | undefined;
   let overlayImage: BackgroundImage | undefined;
   let overlayPath: string | undefined;
@@ -63,6 +101,9 @@ export async function installPixivBackground(
   let progressFill: HTMLDivElement | undefined;
   let progressTimer: number | undefined;
   let rotationController: AbortController | undefined;
+  let rotationIsAutomatic = false;
+  let automaticRotationPending = false;
+  let unsubscribeSettings: (() => void) | undefined;
   const timeline: BackgroundImage[] = [];
   let timelineIndex = -1;
   let lastWindowOrientation = getWindowOrientation();
@@ -80,6 +121,8 @@ export async function installPixivBackground(
 
   function cleanup() {
     stopped = true;
+    unsubscribeSettings?.();
+    unsubscribeSettings = undefined;
     window.clearTimeout(timer);
     window.removeEventListener('keydown', onKeyDown, true);
     window.removeEventListener('keyup', onKeyUp, true);
@@ -168,6 +211,13 @@ export async function installPixivBackground(
     image.style.filter = originalImageActive ? 'none' : `blur(${blurPx}px)`;
     image.style.mixBlendMode = originalImageActive ? 'normal' : 'screen';
     image.style.opacity = originalImageActive ? '1' : String(overlayOpacity);
+  }
+
+  function commitSettings(change: (settings: Settings) => void) {
+    const next = JSON.parse(JSON.stringify(getSettings())) as Settings;
+    change(next);
+    if (state.__pixivSetSettings__) state.__pixivSetSettings__(next);
+    else applySettings(next);
   }
 
   function imageOrientation(image: HTMLImageElement): Orientation {
@@ -418,7 +468,7 @@ export async function installPixivBackground(
     timer = undefined;
     window.clearTimeout(progressTimer);
     progressTimer = undefined;
-    const canRotate = !stopped && candidatesForWindow().length >= 2;
+    const canRotate = !stopped && rotationEnabled && candidatesForWindow().length >= 2;
     if (progressFill) progressFill.style.width = '0%';
     if (progressBar) progressBar.style.display = canRotate ? '' : 'none';
     if (!canRotate) return;
@@ -429,21 +479,49 @@ export async function installPixivBackground(
       progressTimer = undefined;
       if (stopped || !progressFill) return;
       // Derive progress from elapsed time so delayed callbacks catch up without drift.
-      const elapsed = Math.min(intervalMs, Math.max(0, now() - startedAt));
-      progressFill.style.width = `${elapsed / intervalMs * 100}%`;
-      if (elapsed < intervalMs) {
-        progressTimer = window.setTimeout(updateProgress, Math.min(50, intervalMs - elapsed));
+      const elapsed = Math.min(rotationIntervalMs, Math.max(0, now() - startedAt));
+      progressFill.style.width = `${elapsed / rotationIntervalMs * 100}%`;
+      if (elapsed < rotationIntervalMs) {
+        progressTimer = window.setTimeout(updateProgress, Math.min(50, rotationIntervalMs - elapsed));
       }
     }
     progressTimer = window.setTimeout(updateProgress, 50);
     timer = window.setTimeout(() => {
       timer = undefined;
       if (progressFill) progressFill.style.width = '100%';
-      void rotate().catch((error) => console.error('[Pixiv 背景]', error));
-    }, intervalMs);
+      if (rotationController) {
+        automaticRotationPending = true;
+        return;
+      }
+      void rotate(true).catch((error) => console.error('[Pixiv 背景]', error));
+    }, rotationIntervalMs);
   }
 
-  function rotate(): Promise<void> {
+  function applySettings(settings: Settings) {
+    runtimeSettings = settings;
+    const timingChanged = rotationEnabled !== settings.rotation.enabled ||
+      rotationIntervalMs !== settings.rotation.intervalMs;
+    rotationEnabled = settings.rotation.enabled;
+    rotationIntervalMs = settings.rotation.intervalMs;
+    fadeDurationMs = settings.rotation.fadeDurationMs;
+    foregroundVisible = settings.appearance.visible;
+    blurPx = settings.appearance.blurPx;
+    overlayOpacity = settings.appearance.opacity;
+    if (overlay) {
+      syncImageStyle(overlay);
+      overlay.style.transition = `opacity ${fadeDurationMs}ms ease`;
+      overlay.style.display = foregroundVisible ? '' : 'none';
+    }
+    if (timingChanged) {
+      // A timing change starts a fresh interval from the moment it is applied.
+      if (rotationIsAutomatic) rotationController?.abort();
+      if (!rotationController || !rotationIsAutomatic) restartTimer();
+    }
+    if (!rotationEnabled) automaticRotationPending = false;
+    if (progressBar && !rotationEnabled) progressBar.style.display = 'none';
+  }
+
+  function rotate(automatic = false): Promise<void> {
     if (stopped) return Promise.resolve();
     discardForwardHistory();
     window.clearTimeout(timer);
@@ -453,10 +531,18 @@ export async function installPixivBackground(
     rotationController?.abort();
     const controller = new AbortController();
     rotationController = controller;
+    rotationIsAutomatic = automatic;
+    if (automatic) automaticRotationPending = false;
     const rotation = showNext(controller).finally(() => {
       if (rotationController === controller) {
         rotationController = undefined;
-        restartTimer();
+        rotationIsAutomatic = false;
+        if (automaticRotationPending && rotationEnabled) {
+          automaticRotationPending = false;
+          void rotate(true).catch((error) => console.error('[Pixiv 背景]', error));
+        } else if (timer === undefined) {
+          restartTimer();
+        }
       }
     });
     return rotation;
@@ -515,66 +601,46 @@ export async function installPixivBackground(
     ) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    overlayOpacity = Math.min(1, Math.max(0, overlayOpacity + (event.deltaY < 0 ? 0.01 : -0.01)));
-    if (overlay) syncImageStyle(overlay);
+    const nextOpacity = Math.min(1, Math.max(0, overlayOpacity + (event.deltaY < 0 ? 0.01 : -0.01)));
+    commitSettings((settings) => { settings.appearance.opacity = nextOpacity; });
     showStatus(`不透明度 ${Math.round(overlayOpacity * 100)}%`);
   }
 
   function onKeyDown(event: KeyboardEvent) {
-    if (
-      !stopped && event.code === 'F5' && !event.altKey && !event.metaKey &&
-      !event.ctrlKey && !event.shiftKey && !event.isComposing
-    ) {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      if (!originalImageActive) {
+    if (stopped || event.isComposing || state.__pixivSettingsPanelOpen__?.()) return;
+    const shortcuts = getSettings().shortcuts;
+    const actions: Array<[string, () => void, boolean?]> = [
+      ['previewOriginal', () => {
         originalImageActive = true;
+        originalImageCode = event.code;
         if (overlay) syncImageStyle(overlay);
+      }],
+      ['copyPath', copyCurrentImagePath, true],
+      ['blurUp', () => commitSettings((settings) => { settings.appearance.blurPx += 1; })],
+      ['blurDown', () => commitSettings((settings) => { settings.appearance.blurPx = Math.max(0, settings.appearance.blurPx - 1); })],
+      ['opacityUp', () => commitSettings((settings) => { settings.appearance.opacity = Math.min(1, settings.appearance.opacity + 0.01); })],
+      ['opacityDown', () => commitSettings((settings) => { settings.appearance.opacity = Math.max(0, settings.appearance.opacity - 0.01); })],
+      ['toggleVisible', () => commitSettings((settings) => { settings.appearance.visible = !settings.appearance.visible; }), true],
+      ['previous', () => { void goToPrevious().catch((error) => console.error('[Pixiv 背景]', error)); }, true],
+      ['next', () => { void goToNext().catch((error) => console.error('[Pixiv 背景]', error)); }, true],
+    ];
+    for (const [action, callback, ignoreRepeat] of actions) {
+      if (matchesShortcut(event, shortcuts[action]!)) {
+        event.preventDefault(); event.stopImmediatePropagation();
+        if (!ignoreRepeat || !event.repeat) callback();
+        if (action === 'blurUp' || action === 'blurDown') showStatus(`模糊 ${getSettings().appearance.blurPx}px`);
+        if (action === 'opacityUp' || action === 'opacityDown') showStatus(`不透明度 ${Math.round(getSettings().appearance.opacity * 100)}%`);
+        return;
       }
-      return;
     }
-    if (stopped || !event.altKey || event.metaKey === event.ctrlKey || event.shiftKey || event.isComposing) return;
-    if (event.code === 'KeyC') {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      if (!event.repeat) copyCurrentImagePath();
-      return;
-    }
-    if (event.code === 'ArrowUp' || event.code === 'ArrowDown') {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      blurPx = Math.max(0, blurPx + (event.code === 'ArrowUp' ? 1 : -1));
-      if (overlay) syncImageStyle(overlay);
-      showStatus(`模糊 ${blurPx}px`);
-      return;
-    }
-    if (event.code === 'Space') {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      if (!event.repeat) {
-        foregroundVisible = !foregroundVisible;
-        if (overlay) overlay.style.display = foregroundVisible ? '' : 'none';
-      }
-      return;
-    }
-    if (event.code === 'ArrowLeft') {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      if (!event.repeat) void goToPrevious().catch((error) => console.error('[Pixiv 背景]', error));
-      return;
-    }
-    if (event.code !== 'ArrowRight') return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    if (event.repeat || rotationController) return;
-    void goToNext().catch((error) => console.error('[Pixiv 背景]', error));
   }
 
   function onKeyUp(event: KeyboardEvent) {
-    if (stopped || event.code !== 'F5' || !originalImageActive) return;
+    if (stopped || event.code !== originalImageCode || !originalImageActive) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     originalImageActive = false;
+    originalImageCode = undefined;
     if (overlay) syncImageStyle(overlay);
   }
 
@@ -632,6 +698,7 @@ export async function installPixivBackground(
     window.addEventListener('keyup', onKeyUp, true);
     window.addEventListener('wheel', onWheel, { capture: true, passive: false });
     window.addEventListener('resize', onResize);
+    unsubscribeSettings = state.__pixivSubscribeSettings__?.(applySettings);
     await rotate();
     return images.length;
   } catch (error) {

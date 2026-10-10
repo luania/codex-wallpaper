@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { runInNewContext } from 'node:vm';
 import test from 'node:test';
 import { installPixivBackground } from './background.ts';
+import { DEFAULT_INJECT_SETTINGS } from './settings.ts';
 
 type Listener = (...args: any[]) => void;
 type FakeFile = {
@@ -16,6 +17,7 @@ function createPage(
     { name: 'wide.png', type: 'image/png', webkitRelativePath: 'selected/wide.png' },
     { name: 'tall.jpg', type: 'image/jpeg', webkitRelativePath: 'selected/tall.jpg' },
   ],
+  initialSettings?: typeof DEFAULT_INJECT_SETTINGS,
 ) {
   const listeners = new Map<string, Set<Listener>>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
@@ -24,6 +26,9 @@ function createPage(
   const preventedEvents: string[] = [];
   const objectUrls: string[] = [];
   const revokedUrls: string[] = [];
+  const timerDelays: number[] = [];
+  const settingsSubscribers = new Set<(settings: typeof DEFAULT_INJECT_SETTINGS) => void>();
+  let currentSettings = initialSettings;
   let shown: FakeImage | undefined;
   let decodeCalls = 0;
   const sizes: Record<string, [number, number]> = {
@@ -88,6 +93,7 @@ function createPage(
     innerWidth: 1200,
     innerHeight: 800,
     setTimeout(callback: () => void, delay: number) {
+      timerDelays.push(delay);
       const timer = setTimeout(() => {
         timers.delete(timer);
         callback();
@@ -111,6 +117,18 @@ function createPage(
     removeEventListener(type: string, listener: Listener) {
       listeners.get(type)?.delete(listener);
     },
+    ...(initialSettings ? {
+      __pixivInjectSettings__: initialSettings,
+      __pixivSubscribeSettings__(subscriber: (settings: typeof DEFAULT_INJECT_SETTINGS) => void) {
+        settingsSubscribers.add(subscriber);
+        subscriber(currentSettings!);
+        return () => settingsSubscribers.delete(subscriber);
+      },
+      __pixivSetSettings__(settings: typeof DEFAULT_INJECT_SETTINGS) {
+        currentSettings = settings;
+        for (const subscriber of settingsSubscribers) subscriber(settings);
+      },
+    } : {}),
   };
   const input = new FakeInput();
   const elements = new Map<string, FakeElement>([['input', input]]);
@@ -190,6 +208,14 @@ function createPage(
     listenerCount(type: string) { return listeners.get(type)?.size ?? 0; },
     get objectUrls() { return objectUrls; },
     get revokedUrls() { return revokedUrls; },
+    get timerDelays() { return timerDelays; },
+    setSettings(settings: typeof DEFAULT_INJECT_SETTINGS) {
+      const setSettings = (window as typeof window & {
+        __pixivSetSettings__?: (next: typeof DEFAULT_INJECT_SETTINGS) => void;
+      }).__pixivSetSettings__;
+      assert.ok(setSettings, 'settings bridge was not initialized');
+      setSettings(settings);
+    },
     cleanup() {
       (window as typeof window & { __pixivBackgroundCleanup__?: () => void }).__pixivBackgroundCleanup__?.();
     },
@@ -476,6 +502,43 @@ test('hides the progress bar when only one image can rotate', async () => {
   try {
     assert.equal(page.progress?.style.display, 'none');
     assert.equal(page.progressFill?.style.width, '0%');
+  } finally {
+    page.cleanup();
+  }
+});
+
+test('applies persisted appearance settings and restarts rotation timing when they change', async () => {
+  const initial = structuredClone(DEFAULT_INJECT_SETTINGS);
+  initial.rotation.intervalMs = 12_000;
+  initial.rotation.fadeDurationMs = 250;
+  initial.appearance.blurPx = 4;
+  initial.appearance.opacity = 0.5;
+  initial.appearance.visible = false;
+  const page = createPage(() => 0, [
+    { name: 'wide.png', type: 'image/png', webkitRelativePath: 'selected/wide.png' },
+    { name: 'wide2.png', type: 'image/png', webkitRelativePath: 'selected/wide2.png' },
+  ], initial);
+  await page.install('input');
+  try {
+    assert.equal(page.shown?.style.filter, 'blur(4px)');
+    assert.equal(page.shown?.style.opacity, '0.5');
+    assert.equal(page.shown?.style.display, 'none');
+    assert.equal(page.shown?.style.transition, 'opacity 250ms ease');
+
+    const updated = structuredClone(initial);
+    updated.rotation.intervalMs = 18_000;
+    updated.appearance.blurPx = 8;
+    updated.appearance.opacity = 0.75;
+    updated.appearance.visible = true;
+    page.setSettings(updated);
+    assert.equal(page.shown?.style.filter, 'blur(8px)');
+    assert.equal(page.shown?.style.opacity, '0.75');
+    assert.equal(page.shown?.style.display, '');
+    assert.ok(page.timerDelays.includes(18_000));
+
+    updated.rotation.enabled = false;
+    page.setSettings(updated);
+    assert.equal(page.progress?.style.display, 'none');
   } finally {
     page.cleanup();
   }
