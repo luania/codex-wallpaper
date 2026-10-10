@@ -21,6 +21,7 @@ function createPage(
   const timers = new Set<ReturnType<typeof setTimeout>>();
   const appended: Array<FakeImage | FakeElement> = [];
   const copied: string[] = [];
+  const preventedEvents: string[] = [];
   const objectUrls: string[] = [];
   const revokedUrls: string[] = [];
   let shown: FakeImage | undefined;
@@ -185,6 +186,8 @@ function createPage(
     get progress() { return elements.get('__my_progress__'); },
     get progressFill() { return elements.get('__my_progress__')?.children[0]; },
     get copied() { return copied; },
+    get preventedEvents() { return preventedEvents; },
+    listenerCount(type: string) { return listeners.get(type)?.size ?? 0; },
     get objectUrls() { return objectUrls; },
     get revokedUrls() { return revokedUrls; },
     cleanup() {
@@ -505,10 +508,154 @@ test('shows the current blur and opacity while adjusting them', async () => {
       preventDefault() {},
       stopImmediatePropagation() {},
     });
-    assert.equal(page.status?.textContent, '不透明度 21%');
+    assert.equal(page.status?.textContent, '不透明度 34%');
   } finally {
     page.cleanup();
   }
+});
+
+test('shows the current image without effects while F5 is held', async () => {
+  const page = createPage();
+  await page.install('input');
+  const event = {
+    code: 'F5',
+    altKey: false,
+    metaKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    isComposing: false,
+    repeat: false,
+    preventDefault() { page.preventedEvents.push('keydown'); },
+    stopImmediatePropagation() {},
+  };
+  try {
+    page.emit('keydown', event);
+    assert.equal(page.shown?.style.filter, 'none');
+    assert.equal(page.shown?.style.mixBlendMode, 'normal');
+    assert.equal(page.shown?.style.opacity, '1');
+    assert.deepEqual(page.preventedEvents, ['keydown']);
+
+    page.emit('keydown', { ...event, repeat: true });
+    assert.equal(page.shown?.style.filter, 'none');
+    assert.deepEqual(page.preventedEvents, ['keydown', 'keydown']);
+  } finally {
+    page.cleanup();
+  }
+});
+
+test('restores image effects after F5 is released', async () => {
+  const page = createPage();
+  await page.install('input');
+  const f5 = {
+    code: 'F5',
+    altKey: false,
+    metaKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    isComposing: false,
+    repeat: false,
+    preventDefault() {},
+    stopImmediatePropagation() {},
+  };
+  try {
+    page.emit('keydown', f5);
+    page.emit('keyup', f5);
+    assert.equal(page.shown?.style.filter, 'blur(0px)');
+    assert.equal(page.shown?.style.mixBlendMode, 'screen');
+    assert.equal(page.shown?.style.opacity, '0.33');
+  } finally {
+    page.cleanup();
+  }
+});
+
+test('keeps original image mode through image changes and restores updated values on release', async () => {
+  const page = createPage(() => 0.999999, [
+    { name: 'wide.png', type: 'image/png', webkitRelativePath: 'selected/wide.png' },
+    { name: 'wide2.png', type: 'image/png', webkitRelativePath: 'selected/wide2.png' },
+  ]);
+  await page.install('input');
+  const f5 = {
+    code: 'F5',
+    altKey: false,
+    metaKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    isComposing: false,
+    repeat: false,
+    preventDefault() {},
+    stopImmediatePropagation() {},
+  };
+  try {
+    page.emit('keydown', f5);
+    page.emit('keydown', {
+      code: 'ArrowUp',
+      altKey: true,
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      isComposing: false,
+      repeat: false,
+      preventDefault() {},
+      stopImmediatePropagation() {},
+    });
+    page.emit('wheel', {
+      altKey: true,
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      deltaY: -1,
+      preventDefault() {},
+      stopImmediatePropagation() {},
+    });
+    page.emit('keydown', {
+      code: 'ArrowRight',
+      altKey: true,
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      isComposing: false,
+      repeat: false,
+      preventDefault() {},
+      stopImmediatePropagation() {},
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(page.shown?.style.filter, 'none');
+    assert.equal(page.shown?.style.mixBlendMode, 'normal');
+    assert.equal(page.shown?.style.opacity, '1');
+
+    page.emit('keyup', f5);
+    assert.equal(page.shown?.style.filter, 'blur(1px)');
+    assert.equal(page.shown?.style.mixBlendMode, 'screen');
+    assert.equal(page.shown?.style.opacity, '0.34');
+  } finally {
+    page.cleanup();
+  }
+});
+
+test('ignores modified F5 and removes its keyup listener during cleanup', async () => {
+  const page = createPage();
+  await page.install('input');
+  const modifiers = ['altKey', 'metaKey', 'ctrlKey', 'shiftKey'] as const;
+  for (const modifier of modifiers) {
+    page.emit('keydown', {
+      code: 'F5',
+      altKey: false,
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      isComposing: false,
+      repeat: false,
+      [modifier]: true,
+      preventDefault() { page.preventedEvents.push(modifier); },
+      stopImmediatePropagation() {},
+    });
+  }
+  assert.equal(page.shown?.style.filter, 'blur(0px)');
+  assert.deepEqual(page.preventedEvents, []);
+  assert.equal(page.listenerCount('keyup'), 1);
+  page.cleanup();
+  assert.equal(page.listenerCount('keyup'), 0);
+  assert.deepEqual(page.preventedEvents, []);
 });
 
 test('copies the current image relative path with the copy shortcut', async () => {

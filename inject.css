@@ -48,3 +48,7 @@ body._pure-mode_ [class*="_ComposerTopMenuShell"] {
   opacity: 1 !important;
   pointer-events: auto;
 }
+
+div[aria-label="Conversation"] {
+  box-shadow: none!important;
+}

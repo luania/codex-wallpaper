@@ -365,12 +365,25 @@ test('repeated F4 keydown does not change temporary pure mode state', () => {
   const page = createPage();
   page.install();
   page.advance(30_000);
-  page.emit('keydown', { ...f4Event });
+  let preventedEvents = 0;
+  let stoppedEvents = 0;
+  const trackedEvent = {
+    ...f4Event,
+    preventDefault() { preventedEvents += 1; },
+    stopImmediatePropagation() { stoppedEvents += 1; },
+  };
+  page.emit('keydown', trackedEvent);
   assert.equal(page.body.hasClass('_pure-mode_'), false);
-  page.emit('keydown', { ...f4Event, repeat: true });
+  page.emit('keydown', { ...trackedEvent, repeat: true });
   assert.equal(page.body.hasClass('_pure-mode_'), false);
-  page.emit('keyup', { code: 'F4' });
+  page.emit('keyup', {
+    code: 'F4',
+    preventDefault() { preventedEvents += 1; },
+    stopImmediatePropagation() { stoppedEvents += 1; },
+  });
   assert.equal(page.body.hasClass('_pure-mode_'), true);
+  assert.equal(preventedEvents, 3);
+  assert.equal(stoppedEvents, 3);
 
   page.cleanup();
 });

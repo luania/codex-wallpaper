@@ -3,7 +3,7 @@ export async function installPixivBackground(
   inputId: string,
   metadata: Array<{ path: string; orientation?: 'landscape' | 'portrait' }>,
 ) {
-  const intervalMs = 60_000;
+  const intervalMs = 5 * 60_000;
   const loadTimeoutMs = 15_000;
   const fadeDurationMs = 1000;
   const statusDurationMs = 1_500;
@@ -53,6 +53,7 @@ export async function installPixivBackground(
   let foregroundVisible = true;
   let blurPx = 0;
   let overlayOpacity = 0.33;
+  let originalImageActive = false;
   let overlay: HTMLImageElement | undefined;
   let overlayImage: BackgroundImage | undefined;
   let overlayPath: string | undefined;
@@ -81,6 +82,7 @@ export async function installPixivBackground(
     stopped = true;
     window.clearTimeout(timer);
     window.removeEventListener('keydown', onKeyDown, true);
+    window.removeEventListener('keyup', onKeyUp, true);
     window.removeEventListener('wheel', onWheel, true);
     window.removeEventListener('resize', onResize);
     rotationController?.abort();
@@ -160,6 +162,12 @@ export async function installPixivBackground(
 
   function getWindowOrientation(): Orientation {
     return window.innerWidth >= window.innerHeight ? 'landscape' : 'portrait';
+  }
+
+  function syncImageStyle(image: HTMLImageElement) {
+    image.style.filter = originalImageActive ? 'none' : `blur(${blurPx}px)`;
+    image.style.mixBlendMode = originalImageActive ? 'normal' : 'screen';
+    image.style.opacity = originalImageActive ? '1' : String(overlayOpacity);
   }
 
   function imageOrientation(image: HTMLImageElement): Orientation {
@@ -330,13 +338,11 @@ export async function installPixivBackground(
       height: '100vh',
       objectFit: 'cover',
       objectPosition: 'center',
-      opacity: String(overlayOpacity),
-      filter: `blur(${blurPx}px)`,
       transition: `opacity ${fadeDurationMs}ms ease`,
-      mixBlendMode: 'screen',
       zIndex: '2147483646',
       pointerEvents: 'none',
     });
+    syncImageStyle(next);
     next.style.display = foregroundVisible ? '' : 'none';
     next.style.opacity = '0';
     document.documentElement.appendChild(next);
@@ -349,7 +355,7 @@ export async function installPixivBackground(
     else timelineIndex = historyIndex;
     window.requestAnimationFrame(() => {
       if (stopped) return;
-      next.style.opacity = String(overlayOpacity);
+      next.style.opacity = originalImageActive ? '1' : String(overlayOpacity);
       if (!previous) return;
       fadingOverlays.add(previous);
       previous.style.transition = `opacity ${fadeDurationMs}ms ease`;
@@ -510,11 +516,23 @@ export async function installPixivBackground(
     event.preventDefault();
     event.stopImmediatePropagation();
     overlayOpacity = Math.min(1, Math.max(0, overlayOpacity + (event.deltaY < 0 ? 0.01 : -0.01)));
-    if (overlay) overlay.style.opacity = String(overlayOpacity);
+    if (overlay) syncImageStyle(overlay);
     showStatus(`不透明度 ${Math.round(overlayOpacity * 100)}%`);
   }
 
   function onKeyDown(event: KeyboardEvent) {
+    if (
+      !stopped && event.code === 'F5' && !event.altKey && !event.metaKey &&
+      !event.ctrlKey && !event.shiftKey && !event.isComposing
+    ) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (!originalImageActive) {
+        originalImageActive = true;
+        if (overlay) syncImageStyle(overlay);
+      }
+      return;
+    }
     if (stopped || !event.altKey || event.metaKey === event.ctrlKey || event.shiftKey || event.isComposing) return;
     if (event.code === 'KeyC') {
       event.preventDefault();
@@ -526,7 +544,7 @@ export async function installPixivBackground(
       event.preventDefault();
       event.stopImmediatePropagation();
       blurPx = Math.max(0, blurPx + (event.code === 'ArrowUp' ? 1 : -1));
-      if (overlay) overlay.style.filter = `blur(${blurPx}px)`;
+      if (overlay) syncImageStyle(overlay);
       showStatus(`模糊 ${blurPx}px`);
       return;
     }
@@ -550,6 +568,14 @@ export async function installPixivBackground(
     event.stopImmediatePropagation();
     if (event.repeat || rotationController) return;
     void goToNext().catch((error) => console.error('[Pixiv 背景]', error));
+  }
+
+  function onKeyUp(event: KeyboardEvent) {
+    if (stopped || event.code !== 'F5' || !originalImageActive) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    originalImageActive = false;
+    if (overlay) syncImageStyle(overlay);
   }
 
   try {
@@ -603,6 +629,7 @@ export async function installPixivBackground(
     }
     lastWindowOrientation = getWindowOrientation();
     window.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('keyup', onKeyUp, true);
     window.addEventListener('wheel', onWheel, { capture: true, passive: false });
     window.addEventListener('resize', onResize);
     await rotate();

@@ -93,7 +93,7 @@ try {
     throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
   }
   const count = result.result?.value;
-  console.log(`从 ${directory} 选择了 ${typeof count === 'number' ? count : '若干'} 张图片，按窗口横竖方向筛选并每 1 分钟轮替；⌘/Ctrl + Alt + → 历史中前进，到最新记录后随机切换，⌘/Ctrl + Alt + ← 回看历史图片，↑/↓ 调整模糊，滚轮调整不透明度，⌘/Ctrl + Alt + C 复制相对路径，Space 显示/隐藏；⌘/Ctrl + Alt + P 开关纯享模式；程序退出后继续运行。`);
+  console.log(`从 ${directory} 选择了 ${typeof count === 'number' ? count : '若干'} 张图片，按窗口横竖方向筛选并每 1 分钟轮替；⌘/Ctrl + Alt + → 历史中前进，到最新记录后随机切换，⌘/Ctrl + Alt + ← 回看历史图片，↑/↓ 调整模糊，滚轮调整不透明度，F5 按住查看原图，⌘/Ctrl + Alt + C 复制相对路径，Space 显示/隐藏；⌘/Ctrl + Alt + P 开关纯享模式；程序退出后继续运行。`);
 } finally {
   // For a CDP-connected browser this only disconnects; page timers keep running.
   await browser.close();

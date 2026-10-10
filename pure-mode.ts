@@ -126,9 +126,7 @@ export function installPureMode() {
     );
   }
 
-  function togglePureMode(event: KeyboardEvent) {
-    event.preventDefault();
-    event.stopImmediatePropagation();
+  function togglePureMode() {
     if (pureModeActive) {
       leavePureMode();
       restartIdleTimer();
@@ -140,11 +138,15 @@ export function installPureMode() {
   }
 
   function onKeyDown(event: KeyboardEvent) {
-    if (isStandaloneF4Key(event) && !event.repeat && !f4KeysDown.has(event.code)) {
+    if (isStandaloneF4Key(event)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (event.repeat || f4KeysDown.has(event.code)) return;
+
       f4KeysDown.add(event.code);
       if (f4TapTimer !== undefined) {
         clearF4TapTimer();
-        togglePureMode(event);
+        togglePureMode();
       } else {
         f4TapTimer = window.setTimeout(() => {
           f4TapTimer = undefined;
@@ -163,6 +165,10 @@ export function installPureMode() {
   function onKeyUp(event: KeyboardEvent) {
     if (event.code === 'F4') {
       const wasTracked = f4KeysDown.delete(event.code);
+      if (wasTracked) {
+        event.preventDefault?.();
+        event.stopImmediatePropagation?.();
+      }
       if (pureModeActive && wasTracked && f4KeysDown.size === 0) {
         updatePureModeVisibility();
       } else if (!pureModeActive) {
