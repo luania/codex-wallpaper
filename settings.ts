@@ -5,6 +5,26 @@ export type InjectShortcut = {
   shift: boolean;
 };
 
+export type InjectMixBlendMode =
+  | 'normal'
+  | 'multiply'
+  | 'screen'
+  | 'overlay'
+  | 'darken'
+  | 'lighten'
+  | 'color-dodge'
+  | 'color-burn'
+  | 'hard-light'
+  | 'soft-light'
+  | 'difference'
+  | 'exclusion'
+  | 'hue'
+  | 'saturation'
+  | 'color'
+  | 'luminosity';
+
+export type InjectObjectFit = 'fill' | 'contain' | 'cover' | 'none' | 'scale-down';
+
 export type InjectSettings = {
   rotation: {
     enabled: boolean;
@@ -15,6 +35,8 @@ export type InjectSettings = {
     blurPx: number;
     opacity: number;
     visible: boolean;
+    mixBlendMode: InjectMixBlendMode;
+    objectFit: InjectObjectFit;
   };
   pureMode: {
     autoEnter: boolean;
@@ -37,6 +59,8 @@ export const DEFAULT_INJECT_SETTINGS: InjectSettings = {
     blurPx: 0,
     opacity: 0.33,
     visible: true,
+    mixBlendMode: 'screen',
+    objectFit: 'cover',
   },
   pureMode: {
     autoEnter: true,
@@ -74,6 +98,19 @@ function readBoolean(value: unknown, fallback: boolean) {
   return typeof value === 'boolean' ? value : fallback;
 }
 
+function readEnum<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
+  return typeof value === 'string' && (allowed as readonly string[]).includes(value)
+    ? value as T
+    : fallback;
+}
+
+const MIX_BLEND_MODES: readonly InjectMixBlendMode[] = [
+  'normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge',
+  'color-burn', 'hard-light', 'soft-light', 'difference', 'exclusion', 'hue',
+  'saturation', 'color', 'luminosity',
+];
+const OBJECT_FITS: readonly InjectObjectFit[] = ['fill', 'contain', 'cover', 'none', 'scale-down'];
+
 function normalizeShortcut(value: unknown, fallback: InjectShortcut): InjectShortcut {
   if (!isRecord(value) || typeof value.code !== 'string' || value.code.length === 0) {
     return { ...fallback };
@@ -103,6 +140,8 @@ export function normalizeInjectSettings(value: unknown): InjectSettings {
       blurPx: readNumber(appearance.blurPx, DEFAULT_INJECT_SETTINGS.appearance.blurPx, 0, 500),
       opacity: readNumber(appearance.opacity, DEFAULT_INJECT_SETTINGS.appearance.opacity, 0, 1),
       visible: readBoolean(appearance.visible, DEFAULT_INJECT_SETTINGS.appearance.visible),
+      mixBlendMode: readEnum(appearance.mixBlendMode, MIX_BLEND_MODES, DEFAULT_INJECT_SETTINGS.appearance.mixBlendMode),
+      objectFit: readEnum(appearance.objectFit, OBJECT_FITS, DEFAULT_INJECT_SETTINGS.appearance.objectFit),
     },
     pureMode: {
       autoEnter: readBoolean(pureMode.autoEnter, DEFAULT_INJECT_SETTINGS.pureMode.autoEnter),

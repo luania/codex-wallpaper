@@ -9,7 +9,7 @@ export async function installPixivBackground(
   type Shortcut = { code: string; primary: boolean; alt: boolean; shift: boolean };
   type Settings = {
     rotation: { enabled: boolean; intervalMs: number; fadeDurationMs: number };
-    appearance: { blurPx: number; opacity: number; visible: boolean };
+    appearance: { blurPx: number; opacity: number; visible: boolean; mixBlendMode: string; objectFit: string };
     pureMode: { autoEnter: boolean; idleMs: number };
     shortcuts: Record<string, Shortcut>;
   };
@@ -31,7 +31,7 @@ export async function installPixivBackground(
   };
   const fallbackSettings: Settings = {
     rotation: { enabled: true, intervalMs: 5 * 60_000, fadeDurationMs: 1_000 },
-    appearance: { blurPx: 0, opacity: 0.33, visible: true },
+    appearance: { blurPx: 0, opacity: 0.33, visible: true, mixBlendMode: 'screen', objectFit: 'cover' },
     pureMode: { autoEnter: true, idleMs: 30_000 },
     shortcuts: {
       openSettings: { code: 'Comma', primary: true, alt: true, shift: false },
@@ -87,6 +87,8 @@ export async function installPixivBackground(
   let foregroundVisible = getSettings().appearance.visible;
   let blurPx = getSettings().appearance.blurPx;
   let overlayOpacity = getSettings().appearance.opacity;
+  let mixBlendMode = getSettings().appearance.mixBlendMode;
+  let objectFit = getSettings().appearance.objectFit;
   let rotationEnabled = getSettings().rotation.enabled;
   let rotationIntervalMs = getSettings().rotation.intervalMs;
   let fadeDurationMs = getSettings().rotation.fadeDurationMs;
@@ -209,7 +211,7 @@ export async function installPixivBackground(
 
   function syncImageStyle(image: HTMLImageElement) {
     image.style.filter = originalImageActive ? 'none' : `blur(${blurPx}px)`;
-    image.style.mixBlendMode = originalImageActive ? 'normal' : 'screen';
+    image.style.mixBlendMode = originalImageActive ? 'normal' : mixBlendMode;
     image.style.opacity = originalImageActive ? '1' : String(overlayOpacity);
   }
 
@@ -386,7 +388,7 @@ export async function installPixivBackground(
       inset: '0',
       width: '100vw',
       height: '100vh',
-      objectFit: 'cover',
+      objectFit,
       objectPosition: 'center',
       transition: `opacity ${fadeDurationMs}ms ease`,
       zIndex: '2147483646',
@@ -507,8 +509,11 @@ export async function installPixivBackground(
     foregroundVisible = settings.appearance.visible;
     blurPx = settings.appearance.blurPx;
     overlayOpacity = settings.appearance.opacity;
+    mixBlendMode = settings.appearance.mixBlendMode;
+    objectFit = settings.appearance.objectFit;
     if (overlay) {
       syncImageStyle(overlay);
+      overlay.style.objectFit = objectFit;
       overlay.style.transition = `opacity ${fadeDurationMs}ms ease`;
       overlay.style.display = foregroundVisible ? '' : 'none';
     }

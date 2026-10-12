@@ -83,6 +83,7 @@ class FakeElement {
     for (const child of this.children) {
       if (selector === 'button' && child.tagName === 'button') result.push(child);
       if (selector === 'input[type="number"]' && child.tagName === 'input' && child.type === 'number') result.push(child);
+      if (selector === 'select' && child.tagName === 'select') result.push(child);
       child.queryAll(selector, result);
     }
     return result;
@@ -205,6 +206,21 @@ test('shows wheel shortcuts for opacity controls', () => {
     '⌘/Ctrl + Alt + 滚轮 ↑');
   assert.equal(buttons.find((button) => button.textContent === '⌘/Ctrl + Alt + 滚轮 ↓')?.textContent,
     '⌘/Ctrl + Alt + 滚轮 ↓');
+});
+
+test('updates blend mode and object fit from appearance selects', () => {
+  const page = createPage();
+  page.install();
+  page.emit('keydown', keyEvent('Comma', { ctrlKey: true, altKey: true }));
+  const selects = page.panel().queryAll('select');
+  assert.equal(selects.length, 2);
+  selects[0]!.value = 'multiply';
+  selects[0]!.dispatch('change');
+  selects[1]!.value = 'contain';
+  selects[1]!.dispatch('change');
+  const stored = JSON.parse(page.stored!);
+  assert.equal(stored.appearance.mixBlendMode, 'multiply');
+  assert.equal(stored.appearance.objectFit, 'contain');
 });
 
 test('records an opacity wheel shortcut from the settings panel', () => {

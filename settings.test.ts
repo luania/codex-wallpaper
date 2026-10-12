@@ -29,6 +29,8 @@ test('loads the documented defaults on first use', () => {
   assert.equal(DEFAULT_INJECT_SETTINGS.rotation.intervalMs, 5 * 60_000);
   assert.equal(DEFAULT_INJECT_SETTINGS.shortcuts.opacityUp?.code, 'WheelUp');
   assert.equal(DEFAULT_INJECT_SETTINGS.shortcuts.opacityDown?.code, 'WheelDown');
+  assert.equal(DEFAULT_INJECT_SETTINGS.appearance.mixBlendMode, 'screen');
+  assert.equal(DEFAULT_INJECT_SETTINGS.appearance.objectFit, 'cover');
 });
 
 test('migrates the old keyboard aliases for opacity to wheel shortcuts', () => {
@@ -45,7 +47,13 @@ test('migrates the old keyboard aliases for opacity to wheel shortcuts', () => {
 test('normalizes malformed, unknown, and out-of-range settings', () => {
   const settings = normalizeInjectSettings({
     rotation: { enabled: 'yes', intervalMs: -1, fadeDurationMs: 99_999 },
-    appearance: { blurPx: Number.POSITIVE_INFINITY, opacity: 4, visible: false },
+    appearance: {
+      blurPx: Number.POSITIVE_INFINITY,
+      opacity: 4,
+      visible: false,
+      mixBlendMode: 'unsupported',
+      objectFit: 'unsupported',
+    },
     pureMode: { autoEnter: false, idleMs: 1 },
     shortcuts: {
       next: { code: 'KeyN', primary: false, alt: true, shift: true },
@@ -60,6 +68,8 @@ test('normalizes malformed, unknown, and out-of-range settings', () => {
   assert.equal(settings.appearance.blurPx, 0);
   assert.equal(settings.appearance.opacity, 1);
   assert.equal(settings.appearance.visible, false);
+  assert.equal(settings.appearance.mixBlendMode, 'screen');
+  assert.equal(settings.appearance.objectFit, 'cover');
   assert.equal(settings.pureMode.autoEnter, false);
   assert.equal(settings.pureMode.idleMs, 5_000);
   assert.deepEqual(settings.shortcuts.next, { code: 'KeyN', primary: false, alt: true, shift: true });

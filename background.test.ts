@@ -514,6 +514,8 @@ test('applies persisted appearance settings and restarts rotation timing when th
   initial.appearance.blurPx = 4;
   initial.appearance.opacity = 0.5;
   initial.appearance.visible = false;
+  initial.appearance.mixBlendMode = 'multiply';
+  initial.appearance.objectFit = 'contain';
   const page = createPage(() => 0, [
     { name: 'wide.png', type: 'image/png', webkitRelativePath: 'selected/wide.png' },
     { name: 'wide2.png', type: 'image/png', webkitRelativePath: 'selected/wide2.png' },
@@ -522,6 +524,8 @@ test('applies persisted appearance settings and restarts rotation timing when th
   try {
     assert.equal(page.shown?.style.filter, 'blur(4px)');
     assert.equal(page.shown?.style.opacity, '0.5');
+    assert.equal(page.shown?.style.mixBlendMode, 'multiply');
+    assert.equal(page.shown?.style.objectFit, 'contain');
     assert.equal(page.shown?.style.display, 'none');
     assert.equal(page.shown?.style.transition, 'opacity 250ms ease');
 
@@ -530,9 +534,13 @@ test('applies persisted appearance settings and restarts rotation timing when th
     updated.appearance.blurPx = 8;
     updated.appearance.opacity = 0.75;
     updated.appearance.visible = true;
+    updated.appearance.mixBlendMode = 'difference';
+    updated.appearance.objectFit = 'none';
     page.setSettings(updated);
     assert.equal(page.shown?.style.filter, 'blur(8px)');
     assert.equal(page.shown?.style.opacity, '0.75');
+    assert.equal(page.shown?.style.mixBlendMode, 'difference');
+    assert.equal(page.shown?.style.objectFit, 'none');
     assert.equal(page.shown?.style.display, '');
     assert.ok(page.timerDelays.includes(18_000));
 

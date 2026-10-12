@@ -5,7 +5,13 @@ export function installSettingsPanel(initialSettings: InjectSettings, storageKey
   type Shortcut = { code: string; primary: boolean; alt: boolean; shift: boolean };
   type Settings = {
     rotation: { enabled: boolean; intervalMs: number; fadeDurationMs: number };
-    appearance: { blurPx: number; opacity: number; visible: boolean };
+    appearance: {
+      blurPx: number;
+      opacity: number;
+      visible: boolean;
+      mixBlendMode: string;
+      objectFit: string;
+    };
     pureMode: { autoEnter: boolean; idleMs: number };
     shortcuts: Record<string, Shortcut>;
   };
@@ -29,6 +35,14 @@ export function installSettingsPanel(initialSettings: InjectSettings, storageKey
   const bool = (value: unknown, fallback: boolean) => typeof value === 'boolean' ? value : fallback;
   const number = (value: unknown, fallback: number, min: number, max: number) =>
     typeof value === 'number' && Number.isFinite(value) ? clamp(value, min, max) : fallback;
+  const mixBlendModes = [
+    'normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge',
+    'color-burn', 'hard-light', 'soft-light', 'difference', 'exclusion', 'hue',
+    'saturation', 'color', 'luminosity',
+  ] as const;
+  const objectFits = ['fill', 'contain', 'cover', 'none', 'scale-down'] as const;
+  const enumValue = (value: unknown, fallback: string, allowed: readonly string[]) =>
+    typeof value === 'string' && allowed.includes(value) ? value : fallback;
   const normalizeShortcut = (value: unknown, fallback: Shortcut): Shortcut => {
     if (!isRecord(value) || typeof value.code !== 'string' || value.code.length === 0) return { ...fallback };
     return {
@@ -54,6 +68,8 @@ export function installSettingsPanel(initialSettings: InjectSettings, storageKey
         blurPx: number(appearance.blurPx, defaults.appearance.blurPx, 0, 500),
         opacity: number(appearance.opacity, defaults.appearance.opacity, 0, 1),
         visible: bool(appearance.visible, defaults.appearance.visible),
+        mixBlendMode: enumValue(appearance.mixBlendMode, defaults.appearance.mixBlendMode, mixBlendModes),
+        objectFit: enumValue(appearance.objectFit, defaults.appearance.objectFit, objectFits),
       },
       pureMode: {
         autoEnter: bool(pureMode.autoEnter, defaults.pureMode.autoEnter),
@@ -224,6 +240,26 @@ export function installSettingsPanel(initialSettings: InjectSettings, storageKey
     });
     return element;
   };
+  const selectInput = (
+    value: string,
+    options: readonly string[],
+    change: (next: Settings, value: string) => void,
+    read: (settings: Settings) => string,
+  ) => {
+    const element = document.createElement('select');
+    for (const optionValue of options) {
+      const option = document.createElement('option');
+      option.value = optionValue;
+      option.textContent = optionValue;
+      element.appendChild(option);
+    }
+    element.value = value;
+    element.addEventListener('change', () => {
+      update((next) => change(next, element.value));
+      element.value = read(settings);
+    });
+    return element;
+  };
   const section = (title: string) => {
     const element = document.createElement('section');
     const heading = document.createElement('h3');
@@ -275,6 +311,18 @@ export function installSettingsPanel(initialSettings: InjectSettings, storageKey
     addField(rotation, '显示前景图', toggleControl(settings.appearance.visible, (value) => update((next) => {
       next.appearance.visible = value;
     }, true)));
+    addField(rotation, '混合模式', selectInput(
+      settings.appearance.mixBlendMode,
+      mixBlendModes,
+      (next, value) => { next.appearance.mixBlendMode = value; },
+      (current) => current.appearance.mixBlendMode,
+    ));
+    addField(rotation, '图片填充', selectInput(
+      settings.appearance.objectFit,
+      objectFits,
+      (next, value) => { next.appearance.objectFit = value; },
+      (current) => current.appearance.objectFit,
+    ));
     panel.appendChild(rotation);
 
     const pure = section('纯享模式');

@@ -131,6 +131,18 @@ div[aria-label="Conversation"] {
   font: inherit;
 }
 
+#__pixiv_settings_panel__ .pixiv-settings-row select {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 4px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 5px;
+  background: #202326;
+  color: #fff;
+  font: inherit;
+}
+
 #__pixiv_settings_panel__ .pixiv-settings-toggle {
   justify-self: end;
   min-width: 78px;
