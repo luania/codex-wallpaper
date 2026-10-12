@@ -27,6 +27,19 @@ test('loads the documented defaults on first use', () => {
   const storage = createStorage();
   assert.deepEqual(loadInjectSettings(storage), DEFAULT_INJECT_SETTINGS);
   assert.equal(DEFAULT_INJECT_SETTINGS.rotation.intervalMs, 5 * 60_000);
+  assert.equal(DEFAULT_INJECT_SETTINGS.shortcuts.opacityUp?.code, 'WheelUp');
+  assert.equal(DEFAULT_INJECT_SETTINGS.shortcuts.opacityDown?.code, 'WheelDown');
+});
+
+test('migrates the old keyboard aliases for opacity to wheel shortcuts', () => {
+  const settings = loadInjectSettings(createStorage(JSON.stringify({
+    shortcuts: {
+      opacityUp: { code: 'PageUp', primary: true, alt: true, shift: false },
+      opacityDown: { code: 'PageDown', primary: true, alt: true, shift: false },
+    },
+  })));
+  assert.equal(settings.shortcuts.opacityUp?.code, 'WheelUp');
+  assert.equal(settings.shortcuts.opacityDown?.code, 'WheelDown');
 });
 
 test('normalizes malformed, unknown, and out-of-range settings', () => {

@@ -196,6 +196,35 @@ test('shows explicit states for boolean settings and updates them immediately', 
   assert.equal(JSON.parse(page.stored!).appearance.visible, false);
 });
 
+test('shows wheel shortcuts for opacity controls', () => {
+  const page = createPage();
+  page.install();
+  page.emit('keydown', keyEvent('Comma', { ctrlKey: true, altKey: true }));
+  const buttons = page.panel().queryAll('button');
+  assert.equal(buttons.find((button) => button.textContent === '⌘/Ctrl + Alt + 滚轮 ↑')?.textContent,
+    '⌘/Ctrl + Alt + 滚轮 ↑');
+  assert.equal(buttons.find((button) => button.textContent === '⌘/Ctrl + Alt + 滚轮 ↓')?.textContent,
+    '⌘/Ctrl + Alt + 滚轮 ↓');
+});
+
+test('records an opacity wheel shortcut from the settings panel', () => {
+  const page = createPage();
+  page.install();
+  page.emit('keydown', keyEvent('Comma', { ctrlKey: true, altKey: true }));
+  const opacityUp = page.panel().queryAll('button').find((button) => button.textContent === '⌘/Ctrl + Alt + 滚轮 ↑')!;
+  opacityUp.dispatch('click');
+  page.emit('wheel', {
+    deltaY: -1,
+    metaKey: true,
+    ctrlKey: false,
+    altKey: true,
+    shiftKey: false,
+    preventDefault() {},
+    stopImmediatePropagation() {},
+  });
+  assert.equal(JSON.parse(page.stored!).shortcuts.opacityUp.code, 'WheelUp');
+});
+
 test('restores and persists the default settings', () => {
   const page = createPage();
   page.install();

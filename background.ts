@@ -40,8 +40,8 @@ export async function installPixivBackground(
       toggleVisible: { code: 'Space', primary: true, alt: true, shift: false },
       blurUp: { code: 'ArrowUp', primary: true, alt: true, shift: false },
       blurDown: { code: 'ArrowDown', primary: true, alt: true, shift: false },
-      opacityUp: { code: 'PageUp', primary: true, alt: true, shift: false },
-      opacityDown: { code: 'PageDown', primary: true, alt: true, shift: false },
+      opacityUp: { code: 'WheelUp', primary: true, alt: true, shift: false },
+      opacityDown: { code: 'WheelDown', primary: true, alt: true, shift: false },
       copyPath: { code: 'KeyC', primary: true, alt: true, shift: false },
       previewOriginal: { code: 'F5', primary: false, alt: false, shift: false },
       togglePureMode: { code: 'F4', primary: false, alt: false, shift: false },
@@ -595,10 +595,12 @@ export async function installPixivBackground(
   }
 
   function onWheel(event: WheelEvent) {
-    if (
-      stopped || !event.altKey || event.metaKey === event.ctrlKey ||
-      event.shiftKey || event.deltaY === 0
-    ) return;
+    if (stopped || state.__pixivSettingsPanelOpen__?.() || event.deltaY === 0) return;
+    const action = event.deltaY < 0 ? 'opacityUp' : 'opacityDown';
+    const shortcut = getSettings().shortcuts[action];
+    if (!shortcut || shortcut.code !== (event.deltaY < 0 ? 'WheelUp' : 'WheelDown') ||
+      event.altKey !== shortcut.alt || event.shiftKey !== shortcut.shift ||
+      (shortcut.primary ? event.metaKey === event.ctrlKey : event.metaKey || event.ctrlKey)) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     const nextOpacity = Math.min(1, Math.max(0, overlayOpacity + (event.deltaY < 0 ? 0.01 : -0.01)));

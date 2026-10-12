@@ -62,7 +62,17 @@ export function installSettingsPanel(initialSettings: InjectSettings, storageKey
       shortcuts: {},
     };
     for (const [action, fallback] of Object.entries(defaults.shortcuts)) {
-      result.shortcuts[action] = normalizeShortcut(shortcuts[action], fallback);
+      const shortcut = normalizeShortcut(shortcuts[action], fallback);
+      // Migrate the old opacity defaults, which were stored as keyboard aliases.
+      if (action === 'opacityUp' && shortcut.code === 'PageUp' &&
+        shortcut.primary === fallback.primary && shortcut.alt === fallback.alt && shortcut.shift === fallback.shift) {
+        shortcut.code = fallback.code;
+      }
+      if (action === 'opacityDown' && shortcut.code === 'PageDown' &&
+        shortcut.primary === fallback.primary && shortcut.alt === fallback.alt && shortcut.shift === fallback.shift) {
+        shortcut.code = fallback.code;
+      }
+      result.shortcuts[action] = shortcut;
     }
     return result;
   };
@@ -104,6 +114,7 @@ export function installSettingsPanel(initialSettings: InjectSettings, storageKey
   let open = false;
   const cleanup = () => {
     window.removeEventListener('keydown', onKeyDown, true);
+    window.removeEventListener('wheel', onWheel, true);
     window.clearTimeout(messageTimer);
     messageTimer = undefined;
     delete state.__pixivSubscribeSettings__;
@@ -122,7 +133,10 @@ export function installSettingsPanel(initialSettings: InjectSettings, storageKey
     if (shortcut.primary) parts.push('⌘/Ctrl');
     if (shortcut.alt) parts.push('Alt');
     if (shortcut.shift) parts.push('Shift');
-    parts.push(shortcut.code.replace(/^Key/, '').replace(/^Arrow/, ''));
+    const code = shortcut.code === 'WheelUp' ? '滚轮 ↑' :
+      shortcut.code === 'WheelDown' ? '滚轮 ↓' :
+        shortcut.code.replace(/^Key/, '').replace(/^Arrow/, '');
+    parts.push(code);
     return parts.join(' + ');
   };
   const shortcutMatches = (event: KeyboardEvent, shortcut: Shortcut) =>
@@ -335,6 +349,23 @@ export function installSettingsPanel(initialSettings: InjectSettings, storageKey
     }
   }
 
+  function onWheel(event: WheelEvent) {
+    if (!recordingAction || !open || (recordingAction !== 'opacityUp' && recordingAction !== 'opacityDown')) return;
+    if (event.deltaY === 0 || event.shiftKey || event.metaKey === event.ctrlKey || !event.altKey) return;
+    event.preventDefault(); event.stopImmediatePropagation();
+    const action = recordingAction;
+    recordingAction = undefined;
+    update((next) => {
+      next.shortcuts[action] = {
+        code: event.deltaY < 0 ? 'WheelUp' : 'WheelDown',
+        primary: true,
+        alt: true,
+        shift: false,
+      };
+    }, true);
+    showMessage('快捷键已更新');
+  }
+
   panel = document.createElement('div');
   panel.id = '__pixiv_settings_panel__';
   panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-label', '注入设置');
@@ -346,5 +377,6 @@ export function installSettingsPanel(initialSettings: InjectSettings, storageKey
   state.__pixivOpenSettings__ = () => setOpen(!open);
   state.__pixivSettingsPanelOpen__ = () => open;
   window.addEventListener('keydown', onKeyDown, true);
+  window.addEventListener('wheel', onWheel, true);
   return settings;
 }

@@ -49,8 +49,8 @@ export const DEFAULT_INJECT_SETTINGS: InjectSettings = {
     toggleVisible: { code: 'Space', primary: true, alt: true, shift: false },
     blurUp: { code: 'ArrowUp', primary: true, alt: true, shift: false },
     blurDown: { code: 'ArrowDown', primary: true, alt: true, shift: false },
-    opacityUp: { code: 'PageUp', primary: true, alt: true, shift: false },
-    opacityDown: { code: 'PageDown', primary: true, alt: true, shift: false },
+    opacityUp: { code: 'WheelUp', primary: true, alt: true, shift: false },
+    opacityDown: { code: 'WheelDown', primary: true, alt: true, shift: false },
     copyPath: { code: 'KeyC', primary: true, alt: true, shift: false },
     previewOriginal: { code: 'F5', primary: false, alt: false, shift: false },
     togglePureMode: { code: 'F4', primary: false, alt: false, shift: false },
@@ -112,7 +112,17 @@ export function normalizeInjectSettings(value: unknown): InjectSettings {
   };
 
   for (const [action, fallback] of Object.entries(DEFAULT_INJECT_SETTINGS.shortcuts)) {
-    normalized.shortcuts[action] = normalizeShortcut(shortcuts[action], fallback);
+    const shortcut = normalizeShortcut(shortcuts[action], fallback);
+    // Migrate the old opacity defaults, which were stored as keyboard aliases.
+    if (action === 'opacityUp' && shortcut.code === 'PageUp' &&
+      shortcut.primary === fallback.primary && shortcut.alt === fallback.alt && shortcut.shift === fallback.shift) {
+      shortcut.code = fallback.code;
+    }
+    if (action === 'opacityDown' && shortcut.code === 'PageDown' &&
+      shortcut.primary === fallback.primary && shortcut.alt === fallback.alt && shortcut.shift === fallback.shift) {
+      shortcut.code = fallback.code;
+    }
+    normalized.shortcuts[action] = shortcut;
   }
   return normalized;
 }
