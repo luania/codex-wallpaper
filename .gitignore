@@ -1,6 +1,7 @@
 node_modules/
 imgs/
-downloads/
+downloads/*
+!downloads/.gitkeep
 pixivflow-ranking*.config.json
 data/
 codex-snapshot/
