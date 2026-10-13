@@ -2,6 +2,8 @@
 
 Codex Wallpaper 的核心功能是把本地图片作为 ChatGPT 桌面应用的背景，并按窗口方向自动轮替。你可以直接使用已有图片；Pixiv 下载命令只是可选的图片来源，放在本文最后。
 
+![Codex Wallpaper 效果展示](assets/codex-wallpaper.jpg)
+
 ## 环境要求
 
 - macOS，且已安装 ChatGPT 桌面应用。`pnpm codex:start` 默认从 `/Applications/ChatGPT.app` 启动应用。
