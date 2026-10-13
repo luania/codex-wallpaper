@@ -29,7 +29,10 @@ test('loads the documented defaults on first use', () => {
   assert.equal(DEFAULT_INJECT_SETTINGS.rotation.intervalMs, 5 * 60_000);
   assert.equal(DEFAULT_INJECT_SETTINGS.shortcuts.opacityUp?.code, 'WheelUp');
   assert.equal(DEFAULT_INJECT_SETTINGS.shortcuts.opacityDown?.code, 'WheelDown');
-  assert.equal(DEFAULT_INJECT_SETTINGS.appearance.mixBlendMode, 'screen');
+  assert.equal(DEFAULT_INJECT_SETTINGS.appearance.mixBlendMode, 'normal');
+  assert.equal(loadInjectSettings(createStorage(JSON.stringify({
+    appearance: { mixBlendMode: 'screen' },
+  }))).appearance.mixBlendMode, 'screen');
   assert.equal(DEFAULT_INJECT_SETTINGS.appearance.objectFit, 'cover');
 });
 
@@ -68,7 +71,7 @@ test('normalizes malformed, unknown, and out-of-range settings', () => {
   assert.equal(settings.appearance.blurPx, 0);
   assert.equal(settings.appearance.opacity, 1);
   assert.equal(settings.appearance.visible, false);
-  assert.equal(settings.appearance.mixBlendMode, 'screen');
+  assert.equal(settings.appearance.mixBlendMode, 'normal');
   assert.equal(settings.appearance.objectFit, 'cover');
   assert.equal(settings.pureMode.autoEnter, false);
   assert.equal(settings.pureMode.idleMs, 5_000);

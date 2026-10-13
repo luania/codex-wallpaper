@@ -59,7 +59,7 @@ export const DEFAULT_INJECT_SETTINGS: InjectSettings = {
     blurPx: 0,
     opacity: 0.33,
     visible: true,
-    mixBlendMode: 'screen',
+    mixBlendMode: 'normal',
     objectFit: 'cover',
   },
   pureMode: {
