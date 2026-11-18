@@ -201,3 +201,8 @@ div[aria-label="Conversation"] {
 body._pure-mode_ #__pixiv_settings_panel__ {
   display: block;
 }
+
+::selection {
+  background-color: #FF9900;
+  color: #111111;
+}

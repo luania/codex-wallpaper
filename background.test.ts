@@ -9,6 +9,7 @@ type FakeFile = {
   name: string;
   type: string;
   webkitRelativePath: string;
+  fixturePath?: string;
 };
 
 function createPage(
@@ -161,7 +162,7 @@ function createPage(
   };
   const URL = {
     createObjectURL(file: FakeFile) {
-      const url = `blob:${file.webkitRelativePath}`;
+      const url = `blob:${file.fixturePath ?? file.webkitRelativePath}`;
       objectUrls.push(url);
       return url;
     },
@@ -183,7 +184,7 @@ function createPage(
   const install = (
     inputId: string,
     metadata: Array<{ path: string; orientation?: 'landscape' | 'portrait' }> = files.map((file) => ({
-      path: file.webkitRelativePath.replace(/^selected\//, ''),
+      path: file.webkitRelativePath,
       orientation: sizes[file.webkitRelativePath]?.[0]! >= sizes[file.webkitRelativePath]?.[1]!
         ? 'landscape' as const
         : 'portrait' as const,
@@ -241,8 +242,8 @@ test('reads and filters images from the selected file input', async () => {
 test('classifies files in the browser and follows resize orientation', async () => {
   const page = createPage(() => 0);
   await page.install('input', [
-    { path: 'wide.png', orientation: 'landscape' },
-    { path: 'tall.jpg' },
+    { path: 'selected/wide.png', orientation: 'landscape' },
+    { path: 'selected/tall.jpg' },
   ]);
   try {
     assert.equal(page.shown?.url, 'blob:selected/wide.png');
@@ -729,10 +730,17 @@ test('ignores modified F5 and removes its keyup listener during cleanup', async 
   assert.deepEqual(page.preventedEvents, []);
 });
 
-test('copies the current image relative path with the copy shortcut', async () => {
-  const page = createPage();
-  await page.install('input');
+test('copies the correct nested path when selected files have the same name', async () => {
+  const page = createPage(() => 0, [
+    { name: 'cover.jpg', type: 'image/jpeg', webkitRelativePath: '', fixturePath: 'selected/tall.jpg' },
+    { name: 'cover.jpg', type: 'image/jpeg', webkitRelativePath: '', fixturePath: 'selected/wide.png' },
+  ]);
+  await page.install('input', [
+    { path: 'selected/first/cover.jpg', orientation: 'portrait' },
+    { path: 'selected/second/cover.jpg', orientation: 'landscape' },
+  ]);
   try {
+    assert.deepEqual(page.objectUrls, ['blob:selected/wide.png']);
     page.emit('keydown', {
       code: 'KeyC',
       altKey: true,
@@ -745,7 +753,7 @@ test('copies the current image relative path with the copy shortcut', async () =
       stopImmediatePropagation() {},
     });
     await new Promise((resolve) => setImmediate(resolve));
-    assert.deepEqual(page.copied, ['selected/wide.png']);
+    assert.deepEqual(page.copied, ['selected/second/cover.jpg']);
     assert.equal(page.status?.textContent, '已复制');
   } finally {
     page.cleanup();
@@ -766,5 +774,11 @@ test('rejects a directory without supported images', async () => {
     { name: 'notes.txt', type: 'text/plain', webkitRelativePath: 'selected/notes.txt' },
   ]);
   await assert.rejects(page.install('input'), /所选目录中没有支持的图片/);
+  assert.equal(page.input.removed, true);
+});
+
+test('rejects an incomplete selection instead of assigning the wrong metadata', async () => {
+  const page = createPage();
+  await assert.rejects(page.install('input', [{ path: 'selected/wide.png' }]), /选中 2 个，预期 1 个/);
   assert.equal(page.input.removed, true);
 });

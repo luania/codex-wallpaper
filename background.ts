@@ -62,25 +62,19 @@ export async function installPixivBackground(
     throw new Error('找不到已选择图片目录的 file input');
   }
   const fileInput = input;
-  const metadataByPath = new Map(metadata.map((image) => [image.path, image.orientation]));
-  const files = Array.from(fileInput.files ?? [])
-    .filter((file) => supportedExtensions.has(`.${file.name.split('.').pop()?.toLowerCase() ?? ''}`))
-    .map((file) => {
-      const path = file.webkitRelativePath || file.name;
-      const relativePath = path.includes('/') ? path.slice(path.indexOf('/') + 1) : path;
-      return {
-        file,
-        path,
-        url: undefined,
-        orientation: metadataByPath.get(path) ?? metadataByPath.get(relativePath),
-      };
-    })
-    .sort((a, b) => a.path.localeCompare(b.path, 'en', { numeric: true }));
-  if (files.length === 0) {
+  const files = Array.from(fileInput.files ?? []);
+  if (files.length !== metadata.length || files.some((file, index) =>
+    file.name !== metadata[index]!.path.split('/').pop())) {
+    fileInput.remove();
+    throw new Error(`页面选中的文件与图片清单不一致（选中 ${files.length} 个，预期 ${metadata.length} 个）`);
+  }
+  const images: BackgroundImage[] = files.map((file, index) => ({
+    file, path: metadata[index]!.path, orientation: metadata[index]!.orientation, url: undefined,
+  })).filter(({ file }) => supportedExtensions.has(`.${file.name.split('.').pop()?.toLowerCase() ?? ''}`));
+  if (images.length === 0) {
     fileInput.remove();
     throw new Error('所选目录中没有支持的图片');
   }
-  const images: BackgroundImage[] = files;
 
   let stopped = false;
   let timer: number | undefined;

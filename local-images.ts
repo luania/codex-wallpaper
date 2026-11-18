@@ -7,7 +7,7 @@ const downloadsDirectory = fileURLToPath(new URL('./downloads/', import.meta.url
 const metadataConcurrency = 16;
 export type ImageOrientation = 'landscape' | 'portrait';
 export type LocalImage = {
-  /** Path relative to the directory passed to setInputFiles(). */
+  /** Path relative to the selected downloads directory. */
   path: string;
   orientation?: ImageOrientation;
 };

@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import { randomUUID } from 'node:crypto';
+import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { loadLocalImages } from './local-images.ts';
@@ -25,7 +26,7 @@ if (positionals.length > 1) {
 }
 const { directory, images } = await loadLocalImages(positionals[0]);
 
-const browser = await chromium.connectOverCDP('http://127.0.0.1:9341');
+const browser = await chromium.connectOverCDP('http://127.0.0.1:9341', { isLocal: true });
 try {
   const pages = browser.contexts().flatMap((context) => context.pages());
   const page = pages.find((candidate) => candidate.url() === 'app://-/index.html') ?? pages[0];
@@ -52,7 +53,6 @@ try {
     input.id = id;
     input.type = 'file';
     input.multiple = true;
-    input.setAttribute('webkitdirectory', '');
     input.setAttribute('aria-hidden', 'true');
     input.setAttribute('data-pixiv-background-file-input', 'true');
     Object.assign(input.style, {
@@ -64,7 +64,7 @@ try {
     });
     document.documentElement.appendChild(input);
   }, inputId);
-  await page.locator(`#${inputId}`).setInputFiles(directory);
+  await page.locator(`#${inputId}`).setInputFiles(images.map((image) => join(directory, image.path)));
 
   // Reuse the named world so reinjection also cleans up the previous version.
   const session = await page.context().newCDPSession(page);
@@ -99,7 +99,9 @@ try {
   const result = await session.send('Runtime.callFunctionOn', {
     executionContextId,
     functionDeclaration: installPixivBackground.toString(),
-    arguments: [{ value: inputId }, { value: images }],
+    arguments: [{ value: inputId }, { value: images.map((image) => ({
+      ...image, path: `${basename(directory)}/${image.path}`,
+    })) }],
     awaitPromise: true,
     returnByValue: true,
   });
